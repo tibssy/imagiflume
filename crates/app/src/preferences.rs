@@ -594,6 +594,7 @@ pub(crate) fn show_preferences(ui: &Rc<Ui>, focus_models: bool) {
     }
 
     dialog.add(&models_page);
+    dialog.add(&crate::lora::build_page(ui));
     dialog.add(&crate::backends::build_page(ui));
 
     let about = adw::PreferencesPage::builder()

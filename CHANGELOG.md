@@ -5,6 +5,11 @@ rough edges.
 
 ## Unreleased
 
+- **Sidebar setup**: removed the installed-model caption, increased the spacing
+  between controls, and moved LoRAs directly under Style.
+- **LoRAs**: select multiple weights from the sidebar as chips, add them with
+  **+**, and remove them from each chip. Strength settings moved to
+  **Preferences → LoRAs**; the old enable switches and popup dialog are gone.
 - **New icon**: the cream "if" monogram is now the app icon, with the same
   mark on the About page.
 - **Renamed to Imagiflume**: the app ID is now

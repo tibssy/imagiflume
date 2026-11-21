@@ -1,10 +1,10 @@
-//! LoRA selection dialog.
+//! LoRA selection and weight settings.
 //!
 //! Weights live in a folder next to the models (`models/loras` by default).
-//! The server resolves LoRA paths relative to the folder it was started with,
-//! so the dialog only stores relative paths and weights in the config.
+//! The sidebar selects the active LoRAs; Preferences → LoRAs holds the folder
+//! controls and the weight of each active LoRA.
 
-use std::cell::Cell;
+use std::cell::RefCell;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -15,35 +15,202 @@ use imagiflume_core::config::LoraSelection;
 
 use crate::Ui;
 
-/// Update the sidebar summary after the selection changes.
-pub(crate) fn update_summary(ui: &Rc<Ui>) {
-    let count = ui.config.borrow().loras.len();
-    ui.lora_summary.set_text(&match count {
-        0 => "None active".to_string(),
-        1 => "1 active".to_string(),
-        count => format!("{count} active"),
-    });
-    ui.lora_button.set_tooltip_text(Some(&match count {
-        0 => "Apply LoRA weights to generations".to_string(),
-        1 => "1 LoRA active".to_string(),
-        count => format!("{count} LoRAs active"),
-    }));
+#[derive(Clone)]
+struct Entry {
+    path: String,
+    file_name: String,
+    label: String,
+    size: u64,
+    validation: Result<(), String>,
 }
 
-pub(crate) fn show_dialog(ui: &Rc<Ui>) {
-    let dialog = adw::Dialog::builder()
-        .title("LoRAs")
-        .content_width(620)
-        .build();
-    let toolbar = adw::ToolbarView::new();
-    let header = adw::HeaderBar::new();
-    header.set_title_widget(Some(&adw::WindowTitle::new(
-        "LoRAs",
-        "Applied to every generation and effect",
-    )));
-    toolbar.add_top_bar(&header);
+fn scan(folder: &Path) -> Vec<Entry> {
+    let mut files = Vec::new();
+    collect(folder, &mut files);
+    files.sort();
+    files
+        .into_iter()
+        .map(|path| {
+            let relative = path
+                .strip_prefix(folder)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            let file_name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| relative.clone());
+            let label = Path::new(&file_name)
+                .file_stem()
+                .map(|name| name.to_string_lossy().into_owned())
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| file_name.clone());
+            let size = std::fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
+            let validation = validate(folder, &relative);
+            Entry {
+                path: relative,
+                file_name,
+                label,
+                size,
+                validation,
+            }
+        })
+        .collect()
+}
 
-    let page = adw::PreferencesPage::new();
+fn current_choice(ui: &Rc<Ui>) -> Option<String> {
+    let selected = ui.lora_dropdown.selected();
+    if selected == gtk::INVALID_LIST_POSITION {
+        return None;
+    }
+    ui.lora_choices.borrow().get(selected as usize).cloned()
+}
+
+/// Refresh the sidebar dropdown, chips and empty state.
+pub(crate) fn refresh(ui: &Rc<Ui>) {
+    let entries = scan(&ui.lora_dir);
+    let usable: Vec<Entry> = entries
+        .iter()
+        .filter(|entry| entry.validation.is_ok())
+        .cloned()
+        .collect();
+    let usable_paths: Vec<&str> = usable.iter().map(|entry| entry.path.as_str()).collect();
+
+    let removed: Vec<String> = {
+        let mut config = ui.config.borrow_mut();
+        let removed: Vec<String> = config
+            .loras
+            .iter()
+            .filter(|lora| !usable_paths.iter().any(|path| *path == lora.path))
+            .map(|lora| {
+                Path::new(&lora.path)
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| lora.path.clone())
+            })
+            .collect();
+        if !removed.is_empty() {
+            config
+                .loras
+                .retain(|lora| usable_paths.iter().any(|path| *path == lora.path));
+            let _ = config.save();
+        }
+        removed
+    };
+
+    let current = current_choice(ui);
+    if usable_paths.is_empty() {
+        let model = gtk::StringList::new(&["No LoRAs installed"]);
+        ui.lora_dropdown.set_model(Some(&model));
+        ui.lora_dropdown.set_selected(0);
+        ui.lora_dropdown.set_sensitive(false);
+        ui.lora_choices.borrow_mut().clear();
+    } else {
+        let model = gtk::StringList::new(&usable_paths);
+        ui.lora_dropdown.set_model(Some(&model));
+        *ui.lora_choices.borrow_mut() = usable_paths.iter().map(|path| path.to_string()).collect();
+        let index = current
+            .and_then(|path| usable_paths.iter().position(|candidate| *candidate == path))
+            .unwrap_or(0);
+        ui.lora_dropdown.set_selected(index as u32);
+        ui.lora_dropdown.set_sensitive(true);
+    }
+
+    while let Some(child) = ui.lora_chips.first_child() {
+        ui.lora_chips.remove(&child);
+    }
+    let active = ui.config.borrow().loras.clone();
+    for lora in &active {
+        let Some(entry) = usable.iter().find(|entry| entry.path == lora.path) else {
+            continue;
+        };
+        let chip = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        chip.add_css_class("lora-chip");
+        chip.set_valign(gtk::Align::Center);
+        chip.set_tooltip_text(Some(&format!("{} · weight {:.2}", lora.path, lora.weight)));
+        let label = gtk::Label::new(Some(&entry.label));
+        label.add_css_class("caption");
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        label.set_max_width_chars(18);
+        chip.append(&label);
+        let remove = gtk::Button::builder()
+            .icon_name("window-close-symbolic")
+            .tooltip_text("Remove this LoRA")
+            .valign(gtk::Align::Center)
+            .css_classes(["flat"])
+            .build();
+        {
+            let ui = ui.clone();
+            let path = lora.path.clone();
+            remove.connect_clicked(move |_| {
+                if set_lora(&ui, &path, None) {
+                    refresh(&ui);
+                }
+            });
+        }
+        chip.append(&remove);
+        ui.lora_chips.insert(&chip, -1);
+    }
+
+    if active.is_empty() && !usable.is_empty() {
+        ui.lora_empty.set_text("None selected");
+        ui.lora_empty.set_visible(true);
+    } else {
+        ui.lora_empty.set_visible(false);
+    }
+
+    if !removed.is_empty() {
+        ui.toast.add_toast(adw::Toast::new(&format!(
+            "Removed {}: the file is missing or cannot load.",
+            removed.join(", ")
+        )));
+    }
+    update_add_sensitivity(ui);
+}
+
+pub(crate) fn update_add_sensitivity(ui: &Rc<Ui>) {
+    let selected = current_choice(ui);
+    let active = selected.as_ref().is_some_and(|path| {
+        ui.config
+            .borrow()
+            .loras
+            .iter()
+            .any(|lora| &lora.path == path)
+    });
+    ui.lora_add.set_sensitive(selected.is_some() && !active);
+}
+
+pub(crate) fn add_selected(ui: &Rc<Ui>) {
+    let Some(path) = current_choice(ui) else {
+        return;
+    };
+    if ui
+        .config
+        .borrow()
+        .loras
+        .iter()
+        .any(|lora| lora.path == path)
+    {
+        update_add_sensitivity(ui);
+        return;
+    }
+    if let Err(reason) = validate(&ui.lora_dir, &path) {
+        ui.toast
+            .add_toast(adw::Toast::new(&format!("Cannot add {path}: {reason}")));
+        refresh(ui);
+        return;
+    }
+    if set_lora(ui, &path, Some(1.0)) {
+        refresh(ui);
+    }
+}
+
+/// Preferences → LoRAs page.
+pub(crate) fn build_page(ui: &Rc<Ui>) -> adw::PreferencesPage {
+    let page = adw::PreferencesPage::builder()
+        .title("LoRAs")
+        .icon_name("application-x-addon-symbolic")
+        .build();
 
     let folder = ui.lora_dir.clone();
     if let Err(error) = std::fs::create_dir_all(&folder) {
@@ -65,53 +232,48 @@ pub(crate) fn show_dialog(ui: &Rc<Ui>) {
         open.connect_clicked(move |_| open_folder(&folder));
     }
     folder_row.add_suffix(&open);
+    let rescan = gtk::Button::builder()
+        .label("Rescan")
+        .valign(gtk::Align::Center)
+        .css_classes(["flat"])
+        .tooltip_text("Scan the folder again")
+        .build();
+    folder_row.add_suffix(&rescan);
     folder_group.add(&folder_row);
     page.add(&folder_group);
 
     let weights = adw::PreferencesGroup::builder()
         .title("Weights")
-        .description("LoRAs are model-specific; use weights trained for the active model family.")
+        .description(
+            "LoRAs are model-specific; use weights trained for the active model family. Add or remove active LoRAs from the sidebar; weights apply to the selected LoRAs.",
+        )
         .build();
     page.add(&weights);
-    let rows: Rc<std::cell::RefCell<Vec<gtk::Widget>>> =
-        Rc::new(std::cell::RefCell::new(Vec::new()));
-
-    let rescan = gtk::Button::builder()
-        .label("Rescan folder")
-        .halign(gtk::Align::Start)
-        .css_classes(["flat"])
-        .build();
+    let rows: Rc<RefCell<Vec<gtk::Widget>>> = Rc::new(RefCell::new(Vec::new()));
+    populate_page(ui, &weights, &folder, &rows);
     {
         let ui = ui.clone();
         let weights = weights.clone();
         let folder = folder.clone();
         let rows = rows.clone();
-        rescan.connect_clicked(move |_| populate(&ui, &weights, &folder, &rows));
+        rescan.connect_clicked(move |_| populate_page(&ui, &weights, &folder, &rows));
     }
-    folder_row.add_suffix(&rescan);
 
-    populate(ui, &weights, &folder, &rows);
-
-    toolbar.set_content(Some(&page));
-    dialog.set_child(Some(&toolbar));
-    dialog.present(Some(&ui.window));
+    page
 }
 
-fn populate(
+fn populate_page(
     ui: &Rc<Ui>,
     group: &adw::PreferencesGroup,
     folder: &Path,
-    rows: &Rc<std::cell::RefCell<Vec<gtk::Widget>>>,
+    rows: &Rc<RefCell<Vec<gtk::Widget>>>,
 ) {
     for row in rows.borrow_mut().drain(..) {
         group.remove(&row);
     }
 
-    let mut files = Vec::new();
-    collect(folder, &mut files);
-    files.sort();
-
-    if files.is_empty() {
+    let entries = scan(folder);
+    if entries.is_empty() {
         let row = adw::ActionRow::builder()
             .title("No LoRAs found")
             .subtitle(format!(
@@ -121,121 +283,66 @@ fn populate(
             .build();
         group.add(&row);
         rows.borrow_mut().push(row.upcast());
-        update_summary(ui);
+        refresh(ui);
         return;
     }
 
+    let active = ui.config.borrow().loras.clone();
     let mut disabled = Vec::new();
-    for path in files {
-        let relative = path
-            .strip_prefix(folder)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .replace('\\', "/");
-        let validation = validate(folder, &relative);
-        let selected = ui
-            .config
-            .borrow()
-            .loras
-            .iter()
-            .find(|lora| lora.path == relative)
-            .cloned();
-        let active = selected.is_some();
+    for entry in entries {
+        let selected = active.iter().find(|lora| lora.path == entry.path).cloned();
+        let mut is_active = selected.is_some() && entry.validation.is_ok();
+        if selected.is_some() && entry.validation.is_err() {
+            disabled.push(entry.file_name.clone());
+            set_lora(ui, &entry.path, None);
+            is_active = false;
+        }
         let weight_value = selected.map(|lora| lora.weight).unwrap_or(1.0);
-
-        let size = std::fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
-        let file_name = path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| relative.clone());
-        let subtitle = match &validation {
-            Ok(()) => format!("{} · {}", relative, size_label(size)),
-            Err(reason) => format!("{} · {} · {reason}", relative, size_label(size)),
+        let subtitle = match &entry.validation {
+            Ok(()) => format!("{} · {}", entry.path, size_label(entry.size)),
+            Err(reason) => format!("{} · {} · {reason}", entry.path, size_label(entry.size)),
         };
         let row = adw::ActionRow::builder()
-            .title(&file_name)
+            .title(&entry.file_name)
             .subtitle(subtitle)
             .build();
-        if let Err(reason) = &validation {
+        if let Err(reason) = &entry.validation {
             let warning = gtk::Image::from_icon_name("dialog-warning-symbolic");
             warning.set_tooltip_text(Some(reason));
             row.add_prefix(&warning);
         }
 
-        // A weight that cannot load must not stay active: the server would
-        // silently generate without it.
-        let usable = validation.is_ok();
-        if !usable && active {
-            set_lora(ui, &relative, None);
-            disabled.push(file_name.clone());
-        }
-        let active = active && usable;
-
         let weight = gtk::SpinButton::with_range(0.0, 2.0, 0.05);
         weight.set_digits(2);
         weight.set_width_chars(5);
         weight.set_value(weight_value as f64);
-        weight.set_sensitive(active);
-        weight.set_tooltip_text(Some("LoRA weight"));
-
-        let switch = gtk::Switch::new();
-        switch.set_active(active);
-        switch.set_valign(gtk::Align::Center);
-        switch.set_sensitive(usable);
-        switch.set_tooltip_text(Some(if !usable {
-            "Fix or replace this file before enabling it"
-        } else if active {
-            "Disable this LoRA"
+        weight.set_sensitive(is_active);
+        weight.set_tooltip_text(Some(if is_active {
+            "LoRA weight"
         } else {
-            "Enable this LoRA"
+            "Add this LoRA from the sidebar to change its weight"
         }));
 
-        let suffix = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let status = gtk::Label::new(Some(if is_active { "Active" } else { "Not selected" }));
+        status.add_css_class("caption");
+        if !is_active {
+            status.add_css_class("dim-label");
+        }
+
+        let suffix = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         suffix.set_valign(gtk::Align::Center);
         suffix.append(&weight);
-        suffix.append(&switch);
+        suffix.append(&status);
         row.add_suffix(&suffix);
         group.add(&row);
         rows.borrow_mut().push(row.clone().upcast());
 
-        let guard = Rc::new(Cell::new(false));
-
-        {
+        if is_active {
             let ui = ui.clone();
-            let relative = relative.clone();
-            let weight = weight.clone();
-            let guard = guard.clone();
-            switch.connect_active_notify(move |switch| {
-                if guard.get() {
-                    return;
-                }
-                let active = switch.is_active();
-                weight.set_sensitive(active);
-                let enabled_weight = weight.value() as f32;
-                let saved = if active {
-                    set_lora(&ui, &relative, Some(enabled_weight))
-                } else {
-                    set_lora(&ui, &relative, None)
-                };
-                update_summary(&ui);
-                if !saved {
-                    guard.set(true);
-                    switch.set_active(!active);
-                    guard.set(false);
-                }
-            });
-        }
-
-        {
-            let ui = ui.clone();
-            let relative = relative.clone();
-            let switch = switch.clone();
+            let path = entry.path.clone();
             weight.connect_value_changed(move |weight| {
-                if !switch.is_active() {
-                    return;
-                }
-                if set_lora(&ui, &relative, Some(weight.value() as f32)) {
-                    update_summary(&ui);
+                if set_lora(&ui, &path, Some(weight.value() as f32)) {
+                    refresh(&ui);
                 }
             });
         }
@@ -247,9 +354,8 @@ fn populate(
             disabled.join(", ")
         )));
     }
-    update_summary(ui);
+    refresh(ui);
 }
-
 fn set_lora(ui: &Rc<Ui>, path: &str, weight: Option<f32>) -> bool {
     let mut config = ui.config.borrow_mut();
     let previous = config.loras.clone();
@@ -427,7 +533,7 @@ mod tests {
 
     fn test_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "flux-lora-validation-{name}-{}",
+            "imagiflume-lora-validation-{name}-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);

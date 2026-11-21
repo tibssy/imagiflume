@@ -228,8 +228,11 @@ pub(crate) struct Ui {
     pub seed_entry: gtk::Entry,
     pub random_button: gtk::Button,
     pub batch_spin: gtk::SpinButton,
-    pub lora_button: gtk::Button,
-    pub lora_summary: gtk::Label,
+    pub lora_dropdown: gtk::DropDown,
+    pub lora_add: gtk::Button,
+    pub lora_chips: gtk::FlowBox,
+    pub lora_empty: gtk::Label,
+    pub lora_choices: Rc<RefCell<Vec<String>>>,
     /// Resolved folder scanned for LoRA weights.
     pub lora_dir: PathBuf,
     /// Server log position before the running job, used to catch LoRAs the
@@ -387,6 +390,11 @@ fn install_styles() {
          }
          .chain-toggle:hover {
              background-color: alpha(@accent_bg_color, 0.3);
+         }
+         .lora-chip {
+             background-color: alpha(@view_fg_color, 0.10);
+             border-radius: 999px;
+             padding: 3px 4px 3px 10px;
          }
          .chain-child:hover {
              background-color: alpha(@window_fg_color, 0.06);
@@ -667,8 +675,11 @@ fn build_ui(app: &adw::Application) {
         seed_entry: side.seed_entry,
         random_button: side.random_button,
         batch_spin: side.batch_spin,
-        lora_button: side.lora_button,
-        lora_summary: side.lora_summary,
+        lora_dropdown: side.lora_dropdown,
+        lora_add: side.lora_add,
+        lora_chips: side.lora_chips,
+        lora_empty: side.lora_empty,
+        lora_choices: side.lora_choices,
         lora_dir,
         lora_log_offset: Cell::new(None),
         state: RefCell::new(AppState::default()),
@@ -694,7 +705,7 @@ fn build_ui(app: &adw::Application) {
     install_image_drag(&ui);
     effects::rebuild_menu(&ui);
     effects::install_tools(&ui);
-    lora::update_summary(&ui);
+    lora::refresh(&ui);
     setup_crop_overlay(&ui);
     setup_zoom_overlay(&ui);
     setup_compare_overlay(&ui);
@@ -865,9 +876,15 @@ fn wire_events(ui: &Rc<Ui>, preferences_button: &gtk::Button) {
     }
     {
         let ui = ui.clone();
-        ui.lora_button
+        ui.lora_add
             .clone()
-            .connect_clicked(move |_| lora::show_dialog(&ui));
+            .connect_clicked(move |_| lora::add_selected(&ui));
+    }
+    {
+        let ui = ui.clone();
+        ui.lora_dropdown
+            .clone()
+            .connect_selected_notify(move |_| lora::update_add_sensitivity(&ui));
     }
     {
         let ui = ui.clone();
@@ -1620,12 +1637,15 @@ pub(crate) fn active_preset(ui: &Rc<Ui>) -> &'static ModelPreset {
 
 pub(crate) fn refresh_model(ui: &Rc<Ui>) {
     let prompt_helper = prompt_ai::find_cli(&ui.config.borrow());
+    ui.model_hint.set_visible(false);
+    ui.model_hint.remove_css_class("error");
     if ui.models.borrow().is_empty() {
         ui.model_dropdown
             .set_tooltip_text(Some("No models installed"));
         ui.model_hint
             .set_text("No models installed — download in Preferences");
         ui.model_hint.add_css_class("error");
+        ui.model_hint.set_visible(true);
         ui.generate.set_sensitive(false);
         ui.reference_button.set_visible(false);
         render_reference_strip(ui);
@@ -1645,12 +1665,7 @@ pub(crate) fn refresh_model(ui: &Rc<Ui>) {
     render_reference_strip(ui);
 
     if missing.is_empty() {
-        ui.model_hint.set_text(&format!(
-            "{} · {:.1} GB · installed",
-            model.label,
-            model.total_bytes() as f64 / 1e9
-        ));
-        ui.model_hint.remove_css_class("error");
+        ui.model_hint.set_text("");
         ui.generate.set_sensitive(true);
     } else {
         let names: Vec<&str> = missing.iter().map(|file| file.rel_path).collect();
@@ -1659,6 +1674,7 @@ pub(crate) fn refresh_model(ui: &Rc<Ui>) {
             names.join(", ")
         ));
         ui.model_hint.add_css_class("error");
+        ui.model_hint.set_visible(true);
         ui.generate.set_sensitive(false);
     }
 
