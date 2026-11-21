@@ -5,6 +5,8 @@ rough edges.
 
 ## Unreleased
 
+- **New icon**: the cream "if" monogram is now the app icon, with the same
+  mark on the About page.
 - **Renamed to Imagiflume**: the app ID is now
   `io.github.tibssy.Imagiflume` and the binary is `imagiflume`. Config,
   history and caches now live under `~/.config/imagiflume`,

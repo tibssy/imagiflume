@@ -601,12 +601,17 @@ pub(crate) fn show_preferences(ui: &Rc<Ui>, focus_models: bool) {
         .icon_name("help-about-symbolic")
         .build();
     let about_group = adw::PreferencesGroup::new();
-    about_group.add(
-        &adw::ActionRow::builder()
-            .title(imagiflume_core::APP_NAME)
-            .subtitle(concat!("Version ", env!("CARGO_PKG_VERSION")))
-            .build(),
-    );
+    let about_row = adw::ActionRow::builder()
+        .title(imagiflume_core::APP_NAME)
+        .subtitle(concat!("Version ", env!("CARGO_PKG_VERSION")))
+        .build();
+    let about_icon = gtk::gdk::Display::default()
+        .filter(|display| gtk::IconTheme::for_display(display).has_icon(imagiflume_core::APP_ID))
+        .map(|_| gtk::Image::from_icon_name(imagiflume_core::APP_ID))
+        .unwrap_or_else(|| gtk::Image::from_icon_name("applications-graphics-symbolic"));
+    about_icon.set_pixel_size(64);
+    about_row.add_prefix(&about_icon);
+    about_group.add(&about_row);
     let (backend_label, server_path) = {
         let config = ui.config.borrow();
         (
