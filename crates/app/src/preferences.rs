@@ -600,13 +600,36 @@ pub(crate) fn show_preferences(ui: &Rc<Ui>, focus_models: bool) {
         .title("About")
         .icon_name("help-about-symbolic")
         .build();
-    let about_group = adw::PreferencesGroup::new();
-    about_group.add(
-        &adw::ActionRow::builder()
-            .title(imagiflume_core::APP_NAME)
-            .subtitle(concat!("Version ", env!("CARGO_PKG_VERSION")))
-            .build(),
-    );
+    let hero_group = adw::PreferencesGroup::new();
+    let hero = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    hero.set_halign(gtk::Align::Center);
+    hero.set_margin_top(24);
+    hero.set_margin_bottom(18);
+    hero.set_margin_start(18);
+    hero.set_margin_end(18);
+
+    let about_icon = gtk::gdk::Display::default()
+        .filter(|display| gtk::IconTheme::for_display(display).has_icon(imagiflume_core::APP_ID))
+        .map(|_| gtk::Image::from_icon_name(imagiflume_core::APP_ID))
+        .unwrap_or_else(|| gtk::Image::from_icon_name("applications-graphics-symbolic"));
+    about_icon.set_pixel_size(128);
+    about_icon.set_halign(gtk::Align::Center);
+    hero.append(&about_icon);
+
+    let app_name = gtk::Label::new(Some(imagiflume_core::APP_NAME));
+    app_name.add_css_class("title-1");
+    app_name.set_halign(gtk::Align::Center);
+    hero.append(&app_name);
+
+    let version = gtk::Label::new(Some(&format!("Version {}", env!("CARGO_PKG_VERSION"))));
+    version.add_css_class("dim-label");
+    version.set_halign(gtk::Align::Center);
+    hero.append(&version);
+
+    hero_group.add(&hero);
+    about.add(&hero_group);
+
+    let runtime_group = adw::PreferencesGroup::builder().title("Runtime").build();
     let (backend_label, server_path) = {
         let config = ui.config.borrow();
         (
@@ -618,13 +641,13 @@ pub(crate) fn show_preferences(ui: &Rc<Ui>, focus_models: bool) {
                 .unwrap_or_else(|| "auto-detected".into()),
         )
     };
-    about_group.add(
+    runtime_group.add(
         &adw::ActionRow::builder()
             .title("Backend")
             .subtitle(format!("stable-diffusion.cpp · {backend_label}"))
             .build(),
     );
-    about_group.add(
+    runtime_group.add(
         &adw::ActionRow::builder()
             .title("Server")
             .subtitle(server_path)
@@ -633,13 +656,13 @@ pub(crate) fn show_preferences(ui: &Rc<Ui>, focus_models: bool) {
     let prompt_helper = crate::prompt_ai::find_cli(&ui.config.borrow())
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "not found".into());
-    about_group.add(
+    runtime_group.add(
         &adw::ActionRow::builder()
             .title("Prompt helper")
             .subtitle(format!("llama.cpp · {prompt_helper}"))
             .build(),
     );
-    about.add(&about_group);
+    about.add(&runtime_group);
 
     let project_group = adw::PreferencesGroup::builder().title("Project").build();
     project_group.add(&link_row(
