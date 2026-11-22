@@ -562,15 +562,16 @@ fn build_chain_header(
 }
 
 fn history_thumbnail(entry: &Generation, _depth: usize) -> gtk::AspectFrame {
-    let size = 56;
     let frame = gtk::AspectFrame::builder()
-        .ratio(1.0)
+        .ratio(4.0 / 3.0)
         .obey_child(false)
         .xalign(0.5)
         .yalign(0.5)
-        .width_request(size)
-        .height_request(size)
+        .width_request(56)
+        .height_request(42)
         .build();
+    frame.set_halign(gtk::Align::Start);
+    frame.set_valign(gtk::Align::Center);
     frame.set_overflow(gtk::Overflow::Hidden);
     frame.add_css_class("card");
     frame.add_css_class("history-thumb");
