@@ -43,7 +43,7 @@ fn run(backend: &SdServer, request: &GenerateRequest) -> anyhow::Result<()> {
                 Progress::Done(_) => {}
                 Progress::Preview { .. } => {}
                 Progress::Log(_) => {}
-                Progress::Warning(_) => print!(" warning"),
+                Progress::Fallback(_) => print!(" fallback"),
             }
             use std::io::Write;
             let _ = std::io::stdout().flush();

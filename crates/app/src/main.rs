@@ -3555,9 +3555,12 @@ fn improve_prompt(ui: &Rc<Ui>) {
             Ok(Err(error)) => {
                 tracing::warn!(%error, "prompt improvement failed");
                 ui.status.set_text("Prompt helper unavailable");
-                ui.toast.add_toast(adw::Toast::new(&format!(
-                    "Could not improve prompt: {error}"
-                )));
+                let error = error.to_string();
+                let message = match prompt_ai::dependency_hint(&error) {
+                    Some(hint) => format!("Could not improve prompt: {error}. {hint}"),
+                    None => format!("Could not improve prompt: {error}"),
+                };
+                ui.toast.add_toast(adw::Toast::new(&message));
             }
             Err(_) => {
                 ui.status.set_text("Prompt helper unavailable");
@@ -4335,7 +4338,17 @@ fn start_generation_job(ui: &Rc<Ui>, job: queue::Job, request: GenerateRequest) 
                     finished = true;
                     break;
                 }
-                Progress::Warning(message) => {
+                Progress::Fallback(message) => {
+                    {
+                        // The session now runs on automatic device selection,
+                        // so the status bar must not keep claiming the failed
+                        // backend. Do not persist this; the saved config is
+                        // still the user's choice for the next launch.
+                        let mut config = ui.config.borrow_mut();
+                        config.backend = None;
+                        config.backend_id = None;
+                    }
+                    update_backend_status(&ui);
                     ui.toast.add_toast(adw::Toast::new(&message));
                 }
             }

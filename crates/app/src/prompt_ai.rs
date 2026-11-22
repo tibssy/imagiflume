@@ -242,6 +242,15 @@ fn read_all(mut reader: impl Read) -> String {
     buffer
 }
 
+/// Package hint for the common missing-library failures in prebuilt helpers.
+pub(crate) fn dependency_hint(error: &str) -> Option<&'static str> {
+    if error.contains("libssl.so") {
+        Some("Install OpenSSL (Fedora: openssl-libs; Debian/Ubuntu: libssl3).")
+    } else {
+        None
+    }
+}
+
 fn stderr_tail(stderr: &str) -> String {
     let lines: Vec<&str> = stderr
         .lines()
@@ -325,6 +334,14 @@ fn strip_ansi(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hints_missing_openssl() {
+        let error = "llama-cli: error while loading shared libraries: \
+                     libssl.so.3: cannot open shared object file";
+        assert!(dependency_hint(error).is_some());
+        assert!(dependency_hint("llama-cli timed out").is_none());
+    }
 
     fn command_args() -> Vec<String> {
         build_command(

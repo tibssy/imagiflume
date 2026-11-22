@@ -404,7 +404,7 @@ impl Inner {
                     .is_some_and(|backend| backend != "cpu")
                 {
                     tracing::warn!(%error, "selected backend failed; retrying automatically");
-                    let _ = progress.send_blocking(Progress::Warning(format!(
+                    let _ = progress.send_blocking(Progress::Fallback(format!(
                         "The selected backend could not start ({error}). Retrying with automatic device selection."
                     )));
                     self.stop();

@@ -8,7 +8,11 @@ rough edges.
 - **Backends**: Vulkan is only offered when a Vulkan ICD is installed, and a
   selected non-CPU backend that fails to start is retried with automatic device
   selection plus a warning instead of failing the job. The bottom-right status
-  line now shows the active `sd-server` and `llama.cpp` backends.
+  line shows the selected `sd-server` and `llama.cpp` backends and switches the
+  `sd-server` label to `auto` after such a fallback.
+- **llama.cpp plumbing**: the prebuilt helpers now declare `libssl.so.3` as a
+  requirement. A missing OpenSSL is reported in Preferences, and a prompt
+  improvement failure adds the package hint (`openssl-libs` / `libssl3`).
 - **History filter icon**: falls back to `view-list-symbolic` when the icon
   theme has no `view-filter-symbolic`, avoiding the broken-image icon on some
   distros.

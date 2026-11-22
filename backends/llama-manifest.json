@@ -13,7 +13,10 @@
       "binary": "llama-cli",
       "archive": "tar-gz",
       "min_glibc": "2.34",
-      "notes": "Universal fallback for prompt improvement. Uses the active model's text encoder."
+      "notes": "Universal fallback for prompt improvement. Uses the active model's text encoder.",
+      "requires": [
+        "libssl.so.3"
+      ]
     },
     {
       "id": "llama-vulkan",
@@ -25,7 +28,10 @@
       "size": 36191252,
       "binary": "llama-cli",
       "archive": "tar-gz",
-      "requires": ["libvulkan.so.1"],
+      "requires": [
+        "libvulkan.so.1",
+        "libssl.so.3"
+      ],
       "min_glibc": "2.34",
       "notes": "Cross-vendor GPU build. May be slower than CPU for short prompt rewrites."
     },
@@ -40,7 +46,10 @@
       "binary": "llama-cli",
       "archive": "tar-gz",
       "rocm_major": 10,
-      "requires": ["libamdhip64.so.10"],
+      "requires": [
+        "libamdhip64.so.10",
+        "libssl.so.3"
+      ],
       "notes": "AMD GPUs only. Large download; requires a compatible ROCm runtime."
     },
     {
@@ -54,7 +63,10 @@
       "binary": "llama-cli",
       "archive": "tar-gz",
       "cuda_major": 12,
-      "requires": ["libcudart.so.12"],
+      "requires": [
+        "libcudart.so.12",
+        "libssl.so.3"
+      ],
       "notes": "NVIDIA GPUs with a CUDA 12 runtime. The CUDA runtime is not bundled."
     },
     {
@@ -68,7 +80,10 @@
       "binary": "llama-cli",
       "archive": "tar-gz",
       "cuda_major": 13,
-      "requires": ["libcudart.so.13"],
+      "requires": [
+        "libcudart.so.13",
+        "libssl.so.3"
+      ],
       "notes": "NVIDIA GPUs with a CUDA 13 runtime. CUDA 13 may not support Maxwell (sm_52)."
     }
   ]
