@@ -30,12 +30,14 @@ jobs:
       matrix:
         include:
           - name: cpu
+            runner: ubuntu-22.04
             cmake: ""
             packages: ""
           - name: vulkan
+            runner: ubuntu-24.04
             cmake: "-DGGML_VULKAN=ON"
             packages: "libvulkan-dev glslc"
-    runs-on: ubuntu-22.04
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
       - name: Checkout Imagiflume
