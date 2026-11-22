@@ -14,7 +14,8 @@ rough edges.
 - **History database**: the schema is now versioned, legacy files are backed up
   next to the database (`history.v0.bak`) before migration, migrations run in a
   transaction, and the database is integrity-checked on open. A corrupt or
-  newer-schema file is rejected instead of being silently used.
+  newer-schema file is rejected instead of being silently used, and a startup
+  toast explains when this session had to fall back to temporary history.
 - **Sidebar setup**: removed the installed-model caption, increased the spacing
   between controls, and put the model dropdown and LoRA button on one row. The
   button uses the accent colour when any LoRA is active.

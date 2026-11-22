@@ -516,11 +516,17 @@ fn build_ui(app: &adw::Application) {
         backend: config.backend.clone(),
     }));
 
-    let history = match History::open(&paths::history_db()) {
-        Ok(history) => history,
+    let (history, history_warning) = match History::open(&paths::history_db()) {
+        Ok(history) => (history, None),
         Err(error) => {
             tracing::error!(%error, "failed to open history database; using memory");
-            History::open_in_memory().expect("in-memory history")
+            (
+                History::open_in_memory().expect("in-memory history"),
+                Some(
+                    "History database could not be opened; this session uses temporary history."
+                        .to_string(),
+                ),
+            )
         }
     };
 
@@ -805,6 +811,9 @@ fn build_ui(app: &adw::Application) {
 
     ui.window.present();
     show_composer(&ui, true);
+    if let Some(warning) = history_warning {
+        ui.toast.add_toast(adw::Toast::new(&warning));
+    }
 
     if ui.models.borrow().is_empty() {
         preferences::show_preferences(&ui, true);
