@@ -1,38 +1,31 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-14",
+  "generated_at": "2026-11-22",
   "backends": [
     {
       "id": "llama-cpu",
       "label": "CPU (llama.cpp)",
       "kind": "cpu",
-      "version": "b12383",
-      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b12383/llama-b12383-bin-ubuntu-x64.tar.gz",
-      "sha256": "8e1d9d147d7f0dd2399fb32381de126ebc926d452225ef3b19e1675a55e0c794",
-      "size": 23336228,
+      "version": "c56be86",
+      "url": "https://github.com/tibssy/imagiflume/releases/download/backends-llama-c56be86/llama-c56be86-linux-x64-cpu.tar.gz",
+      "sha256": "ff2b78c98720288399742702fa738c8aa0f45970a977a8a7412df41724aedee5",
+      "size": 6281105,
       "binary": "llama-cli",
       "archive": "tar-gz",
       "min_glibc": "2.34",
-      "notes": "Universal fallback for prompt improvement. Uses the active model's text encoder.",
-      "requires": [
-        "libssl.so.3"
-      ]
+      "notes": "Universal fallback for prompt improvement. Uses the active model's text encoder."
     },
     {
       "id": "llama-vulkan",
       "label": "Vulkan (llama.cpp)",
       "kind": "vulkan",
-      "version": "b12383",
-      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b12383/llama-b12383-bin-ubuntu-vulkan-x64.tar.gz",
-      "sha256": "6c596df86ee0af1e71798eb211304a2b5e448d344032faa422eb6d7bd638b97f",
-      "size": 36191252,
+      "version": "c56be86",
+      "url": "https://github.com/tibssy/imagiflume/releases/download/backends-llama-c56be86/llama-c56be86-linux-x64-vulkan.tar.gz",
+      "sha256": "4b8f611486a60add0c7d5c0fefd1cf92aaf4dd93da10dafd1c3a4276d24ffed8",
+      "size": 16727896,
       "binary": "llama-cli",
       "archive": "tar-gz",
-      "requires": [
-        "libvulkan.so.1",
-        "libssl.so.3"
-      ],
-      "min_glibc": "2.34",
+      "min_glibc": "2.38",
       "notes": "Cross-vendor GPU build. May be slower than CPU for short prompt rewrites."
     },
     {
