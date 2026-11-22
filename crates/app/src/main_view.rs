@@ -22,7 +22,7 @@ pub(crate) struct MainView {
     pub queue_status: gtk::Label,
     /// Floating queue indicator when the sidebar is hidden.
     pub queue_bubble: gtk::Button,
-    pub queue_bubble_spinner: gtk::Spinner,
+    pub queue_bubble_spinner: crate::spinner::Spinner,
     pub queue_bubble_label: gtk::Label,
     pub cancel: gtk::Button,
     pub status: gtk::Label,
@@ -386,12 +386,11 @@ pub(crate) fn build() -> MainView {
         .tooltip_text("Fit to window")
         .css_classes(["flat", "circular"])
         .build();
-    let queue_bubble_spinner = gtk::Spinner::new();
-    queue_bubble_spinner.set_size_request(14, 14);
+    let queue_bubble_spinner = crate::spinner::Spinner::new(14);
     queue_bubble_spinner.set_visible(false);
     let queue_bubble_label = gtk::Label::builder().css_classes(["caption"]).build();
     let queue_bubble_content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    queue_bubble_content.append(&queue_bubble_spinner);
+    queue_bubble_content.append(&queue_bubble_spinner.widget);
     queue_bubble_content.append(&queue_bubble_label);
     let queue_bubble = gtk::Button::builder()
         .child(&queue_bubble_content)

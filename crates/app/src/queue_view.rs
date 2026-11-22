@@ -125,8 +125,7 @@ pub(crate) fn rebuild(ui: &Rc<Ui>) {
 }
 
 fn running_row(ui: &Rc<Ui>, running: &queue::Running) -> adw::ActionRow {
-    let spinner = gtk::Spinner::new();
-    spinner.set_size_request(16, 16);
+    let spinner = crate::spinner::Spinner::new(16);
     spinner.start();
 
     let live = !running.job.is_upscale();
@@ -137,7 +136,7 @@ fn running_row(ui: &Rc<Ui>, running: &queue::Running) -> adw::ActionRow {
         .build();
     row.set_title_lines(1);
     row.set_subtitle_lines(1);
-    row.add_prefix(&spinner);
+    row.add_prefix(&spinner.widget);
 
     if live {
         row.set_tooltip_text(Some("Show the running job's live preview"));

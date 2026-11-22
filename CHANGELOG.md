@@ -5,6 +5,10 @@ rough edges.
 
 ## 0.2.0-beta.1 — 2026-11-22
 
+- **Spinners**: the running-job spinner and the floating queue pill keep
+  animating after the sidebar is hidden and shown again. GTK 4.24 pauses its
+  built-in spinner animation on unmap and does not restart it on remap, so the
+  queue uses a small tick-driven spinner instead.
 - **Aspect ratio**: selecting an upscaled, adjusted or imported image now points
   the sidebar ratio at that image without changing the MP target. Previously the
   ratio only updated after pressing **Edit** on the canvas.

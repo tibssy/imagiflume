@@ -13,6 +13,7 @@ mod queue_view;
 mod rounded_clip;
 mod rounded_paintable;
 mod sidebar;
+mod spinner;
 mod state;
 mod upscale_dialog;
 
@@ -169,7 +170,7 @@ pub(crate) struct Ui {
     pub queue_status: gtk::Label,
     /// Floating indicator for the queue when the sidebar is hidden.
     pub queue_bubble: gtk::Button,
-    pub queue_bubble_spinner: gtk::Spinner,
+    pub queue_bubble_spinner: crate::spinner::Spinner,
     pub queue_bubble_label: gtk::Label,
     /// Set once the user confirmed quitting with jobs still queued.
     pub quitting: Cell<bool>,
