@@ -302,10 +302,6 @@ fn build_row_box(ui: &Rc<Ui>, entry: &Generation, depth: usize, group: RowGroup)
     row_box.set_margin_top(6);
     row_box.set_margin_bottom(6);
     row_box.set_height_request(56);
-    if depth > 0 {
-        // Keep the chain visual grouping without changing the row height.
-        row_box.add_css_class("chain-child");
-    }
     row_box.set_margin_start(8 + depth as i32 * 8);
     row_box.set_margin_end(8);
 

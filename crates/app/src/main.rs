@@ -385,6 +385,28 @@ fn install_styles() {
              padding-top: 3px;
              padding-bottom: 3px;
          }
+         /* An expander row wraps its header and the whole chain, so a row
+            background would paint the entire block. Highlight the header or
+            child row instead, and drop the nested list shade. */
+         row.expander.history-row,
+         row.expander.history-row:hover,
+         row.expander.history-row:selected {
+             background: none;
+         }
+         row.expander.history-row list.nested {
+             background: none;
+         }
+         row.expander.history-row > box > list > row.header:hover {
+             background-color: alpha(@view_fg_color, 0.07);
+             border-radius: 9px;
+         }
+         row.expander.history-row:selected > box > list > row.header {
+             background-color: alpha(@view_fg_color, 0.1);
+             border-radius: 9px;
+         }
+         row.expander.history-row list.nested > row:hover {
+             background-color: alpha(@view_fg_color, 0.07);
+         }
          .chain-toggle {
              background-color: alpha(@accent_bg_color, 0.18);
              color: @accent_color;
@@ -420,13 +442,9 @@ fn install_styles() {
              color: @accent_color;
              box-shadow: inset 0 0 0 2px @accent_color;
          }
-         .chain-child:hover {
-             background-color: alpha(@window_fg_color, 0.06);
-             border-radius: 8px;
-         }
          .history-child-selected {
              background-color: alpha(@accent_bg_color, 0.28);
-             border-radius: 8px;
+             border-radius: 9px;
          }
          .sidebar-pane, .overlay-pane {
              background-color: @sidebar_bg_color;
