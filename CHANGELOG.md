@@ -19,7 +19,8 @@ rough edges.
   their content at the bottom right of grouped entries. History rows are
   separated by internal padding instead of gaps, so highlights and selection
   stay continuous. Grouped chains are flattened and expanded groups get a
-  subtle accent tint so the chain reads as one block.
+  subtle accent tint so the chain reads as one block, without a separate
+  separator line under the last child.
 - **New icon**: the cream "if" monogram is now the app icon, with the same
   mark on the About page.
 - **Renamed to Imagiflume**: the app ID is now

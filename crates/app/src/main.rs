@@ -396,12 +396,15 @@ fn install_styles() {
          row.expander.history-row list.nested {
              background: none;
          }
+         row.expander.history-row list.nested > row {
+             border-bottom: none;
+         }
          /* Tint an expanded chain so the group reads as one block. The tint
             must survive hover and selection, which is why it comes last. */
          row.expander.history-row:checked,
          row.expander.history-row:checked:hover,
          row.expander.history-row:checked:selected {
-             background-color: alpha(@accent_bg_color, 0.2);
+             background-color: alpha(@accent_bg_color, 0.1);
              border-radius: 12px;
          }
          row.expander.history-row > box > list > row.header:hover {
