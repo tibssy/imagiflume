@@ -8,8 +8,15 @@ rough edges.
 - **Backends**: Vulkan is only offered when a Vulkan ICD is installed, and a
   selected non-CPU backend that fails to start is retried with automatic device
   selection plus a warning instead of failing the job. The bottom-right status
-  line shows the selected `sd-server` and `llama.cpp` backends and switches the
-  `sd-server` label to `auto` after such a fallback.
+  line shows the selected `sd-server` and `llama.cpp` backends, switches the
+  `sd-server` label to `auto` after such a fallback, and shows llama.cpp as
+  `CPU (Vulkan build)` when its helper falls back because no device is present.
+- **Diagnostics**: About now shows detected hardware and the backend log paths,
+  including a new persistent `llama-cli.log`, with an open-log button and a
+  **Copy diagnostics** action that includes the version, channel, locale, GPU,
+  backend, paths and log locations.
+- **Canvas**: the upscale button is hidden when no upscaler weights are
+  installed.
 - **llama.cpp plumbing**: the CPU and Vulkan helpers are now static
   `LLAMA_OPENSSL=OFF` builds, so they no longer require `libssl` on minimal
   distros. The ROCm/CUDA helpers still declare `libssl.so.3`, and a prompt
@@ -24,9 +31,6 @@ rough edges.
 - **Aspect ratio**: selecting an upscaled, adjusted or imported image now points
   the sidebar ratio at that image without changing the MP target. Previously the
   ratio only updated after pressing **Edit** on the canvas.
-- **Diagnostics**: About now shows detected hardware and the backend log path,
-  with an open-log button and a **Copy diagnostics** action that includes the
-  version, channel, locale, GPU, backend, paths and log location.
 - **History database**: the schema is now versioned, legacy files are backed up
   next to the database (`history.v0.bak`) before migration, migrations run in a
   transaction, and the database is integrity-checked on open. A corrupt or

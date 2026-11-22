@@ -698,6 +698,24 @@ fn show_preferences_inner(ui: &Rc<Ui>, focus_models: bool) {
     log_row.add_suffix(&open_log);
     diagnostics_group.add(&log_row);
 
+    let helper_log = crate::prompt_ai::log_path();
+    let helper_log_row = adw::ActionRow::builder()
+        .title("Prompt helper log")
+        .subtitle(helper_log.display().to_string())
+        .build();
+    let open_helper_log = gtk::Button::builder()
+        .icon_name("document-open-symbolic")
+        .tooltip_text("Open the llama.cpp log")
+        .valign(gtk::Align::Center)
+        .css_classes(["flat"])
+        .build();
+    {
+        let helper_log = helper_log.clone();
+        open_helper_log.connect_clicked(move |_| open_path(&helper_log));
+    }
+    helper_log_row.add_suffix(&open_helper_log);
+    diagnostics_group.add(&helper_log_row);
+
     let copy_row = adw::ActionRow::builder()
         .title("Copy diagnostics")
         .subtitle("Version, backend, hardware, paths and locale")
@@ -1290,6 +1308,11 @@ fn diagnostics_text(ui: &Ui) -> String {
         imagiflume_core::paths::cache_dir()
             .join("sd-server.log")
             .display()
+    );
+    let _ = writeln!(
+        text,
+        "Prompt helper log: {}",
+        crate::prompt_ai::log_path().display()
     );
     text
 }

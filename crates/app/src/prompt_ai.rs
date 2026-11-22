@@ -109,6 +109,9 @@ pub(crate) fn classify_lighting(
 }
 
 fn run_command(mut command: Command, timeout: Duration) -> Result<String> {
+    if let Some(parent) = log_path().parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
     let program = command.get_program().to_string_lossy().into_owned();
     let mut child = command
         .stdin(Stdio::null())
@@ -145,6 +148,20 @@ fn run_command(mut command: Command, timeout: Duration) -> Result<String> {
     Ok(stdout)
 }
 
+/// Persistent llama.cpp log, next to the sd-server log.
+pub(crate) fn log_path() -> PathBuf {
+    imagiflume_core::paths::cache_dir().join("llama-cli.log")
+}
+
+/// Devices reported by the selected helper, used to detect CPU fallback.
+pub(crate) fn list_devices(cli: &Path) -> Option<String> {
+    let output = Command::new(cli).arg("--list-devices").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
 fn build_command(cli: &Path, encoder: &Path, prompt: &str) -> Command {
     let mut command = Command::new(cli);
     command
@@ -170,7 +187,11 @@ fn build_command(cli: &Path, encoder: &Path, prompt: &str) -> Command {
         .arg("0.4")
         .arg("-t")
         .arg(threads().to_string())
-        .arg("--simple-io");
+        .arg("--simple-io")
+        .arg("--log-file")
+        .arg(log_path())
+        .arg("-lv")
+        .arg("4");
     command
 }
 
@@ -198,7 +219,11 @@ fn build_vision_command(cli: &Path, model: &Path, mmproj: &Path, image: &Path) -
         .arg("0")
         .arg("-t")
         .arg(threads().to_string())
-        .arg("--simple-io");
+        .arg("--simple-io")
+        .arg("--log-file")
+        .arg(log_path())
+        .arg("-lv")
+        .arg("4");
     command
 }
 

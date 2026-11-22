@@ -2316,6 +2316,7 @@ pub(crate) fn update_image_actions(ui: &Rc<Ui>) {
     ui.daylight_item.set_visible(!vision_ready);
     ui.night_item.set_visible(!vision_ready);
     let upscale_ready = !foreground
+        && !imagiflume_core::upscaler::installed_upscalers(&ui.models_dir).is_empty()
         && (ui.state.borrow().display.is_some()
             || (generating && !upscaling && ui.live_view.get()));
     ui.upscale_button.set_visible(upscale_ready);

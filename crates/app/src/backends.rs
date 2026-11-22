@@ -5,7 +5,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk::{gdk, glib};
 use imagiflume_core::Config;
-use imagiflume_core::runtime::{self, BackendEntry, BackendManifest, HardwareProfile};
+use imagiflume_core::runtime::{self, BackendEntry, BackendKind, BackendManifest, HardwareProfile};
 
 use crate::Ui;
 
@@ -1224,13 +1224,8 @@ pub(crate) fn active_summary(config: &Config) -> String {
     )
 }
 
-fn manifest_kind_label(id: &str, llama: bool) -> Option<&'static str> {
-    let manifest = if llama {
-        runtime::bundled_llama_manifest()
-    } else {
-        runtime::bundled_manifest()
-    };
-    manifest
+fn manifest_kind_label(id: &str) -> Option<&'static str> {
+    runtime::bundled_manifest()
         .backends
         .iter()
         .find(|entry| entry.id == id)
@@ -1239,7 +1234,7 @@ fn manifest_kind_label(id: &str, llama: bool) -> Option<&'static str> {
 
 fn sd_backend_label(config: &Config) -> String {
     if let Some(id) = &config.backend_id
-        && let Some(label) = manifest_kind_label(id, false)
+        && let Some(label) = manifest_kind_label(id)
     {
         return label.to_string();
     }
@@ -1262,9 +1257,31 @@ fn sd_backend_label(config: &Config) -> String {
 
 fn llama_backend_label(config: &Config) -> String {
     if let Some(id) = &config.llama_backend_id
-        && let Some(label) = manifest_kind_label(id, true)
+        && let Some(entry) = runtime::bundled_llama_manifest()
+            .backends
+            .iter()
+            .find(|entry| &entry.id == id)
     {
-        return label.to_string();
+        if entry.kind == BackendKind::Cpu {
+            return "CPU".into();
+        }
+        let label = entry.kind.label();
+        if let Some(cli) = crate::prompt_ai::find_cli(config)
+            && let Some(devices) = crate::prompt_ai::list_devices(&cli)
+        {
+            let available = match entry.kind {
+                BackendKind::Cpu => true,
+                BackendKind::Vulkan => devices.contains("Vulkan"),
+                BackendKind::Cuda => devices.contains("CUDA"),
+                BackendKind::Rocm => devices.contains("ROCm") || devices.contains("HIP"),
+            };
+            return if available {
+                label.into()
+            } else {
+                format!("CPU ({label} build)")
+            };
+        }
+        return label.into();
     }
     if config.llama_custom_cli.is_some() && config.llama_custom_cli == config.prompt_helper_cli {
         return "Custom".into();
@@ -1287,11 +1304,8 @@ mod tests {
 
         config.backend_id = Some("cuda12".into());
         config.backend = Some("cuda0".into());
-        config.llama_backend_id = Some("llama-vulkan".into());
-        assert_eq!(
-            active_summary(&config),
-            "sd-server: CUDA | llama.cpp: Vulkan"
-        );
+        config.llama_backend_id = Some("llama-cpu".into());
+        assert_eq!(active_summary(&config), "sd-server: CUDA | llama.cpp: CPU");
 
         config.backend_id = None;
         config.backend = Some("vulkan0".into());
