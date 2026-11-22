@@ -445,16 +445,16 @@ fn install_styles() {
              padding: 2px 4px;
              border-radius: 12px;
          }
-         button.active-backend-icon {
-             color: @accent_color;
-             opacity: 1;
-         }
          button.backend-check {
              color: @view_fg_color;
              opacity: 1;
          }
+         button.backend-check.active-backend-icon {
+             color: @accent_color;
+             opacity: 1;
+         }
          button.backend-check:hover {
-             color: @accent_bg_color;
+             color: @accent_color;
          }",
     );
     gtk::style_context_add_provider_for_display(
