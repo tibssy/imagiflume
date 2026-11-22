@@ -36,7 +36,7 @@ jobs:
           - name: vulkan
             runner: ubuntu-24.04
             cmake: "-DGGML_VULKAN=ON"
-            packages: "libvulkan-dev glslc"
+            packages: "libvulkan-dev glslc spirv-headers"
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
