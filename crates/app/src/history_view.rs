@@ -214,6 +214,7 @@ fn rebuild_inner(ui: &Rc<Ui>, preserve_scroll: bool) {
             };
             debug_assert_eq!(*open_root, root);
             let row = gtk::ListBoxRow::new();
+            row.add_css_class("history-row");
             row.set_widget_name(&entry.id.to_string());
             row.set_child(Some(&build_row_box(ui, entry, depth, group)));
             expander.add_row(&row);
@@ -232,6 +233,7 @@ fn rebuild_inner(ui: &Rc<Ui>, preserve_scroll: bool) {
             chain = None;
             let row = gtk::ListBoxRow::new();
             // Row activation resolves entries by id, never by position.
+            row.add_css_class("history-row");
             row.set_widget_name(&entry.id.to_string());
             row.set_child(Some(&build_row_box(ui, entry, depth, group)));
             ui.history_list.append(&row);
@@ -402,6 +404,7 @@ fn build_chain_header(
         .subtitle_lines(1)
         .expanded(!collapsed)
         .build();
+    expander.add_css_class("history-row");
     expander.set_widget_name(&entry.id.to_string());
     expander.set_tooltip_text(Some(&row_tooltip(entry, group_size, false)));
     // The expander's inner AdwActionRow toggles expansion whenever it is
