@@ -337,6 +337,9 @@ fn install_styles() {
          .filter-active {
              color: @accent_color;
          }
+         .queue-wrapper {
+             background: none;
+         }
          .queue-bubble {
              background-image: none;
              background-color: alpha(@window_bg_color, 0.92);

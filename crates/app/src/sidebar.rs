@@ -515,6 +515,7 @@ pub(crate) fn build(
     // AdwExpanderRow is a GtkListBoxRow and warns when parented to a box.
     let queue_wrapper = gtk::ListBox::builder()
         .selection_mode(gtk::SelectionMode::None)
+        .css_classes(["queue-wrapper"])
         .build();
     queue_wrapper.append(&queue_expander);
 
