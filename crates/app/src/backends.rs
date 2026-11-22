@@ -1105,7 +1105,11 @@ fn check_slot(content: Option<gtk::Widget>) -> gtk::Box {
 
 fn check_button(active: bool, tooltip: &str) -> gtk::Button {
     let button = gtk::Button::builder()
-        .icon_name("object-select-symbolic")
+        .icon_name(if active {
+            "radio-checked-symbolic"
+        } else {
+            "radio-symbolic"
+        })
         .tooltip_text(tooltip)
         .valign(gtk::Align::Center)
         .css_classes(["flat", "backend-check"])
