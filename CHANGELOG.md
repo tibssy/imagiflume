@@ -9,8 +9,8 @@ rough edges.
   between controls, and put the model dropdown and LoRA button on one row. The
   button uses the accent colour when any LoRA is active.
 - **LoRAs**: the icon opens a dedicated LoRA dialog with search, checkboxes,
-  weights and folder controls. Changing the model clears active LoRAs because
-  weights are model-specific.
+  weights and folder controls. Active LoRAs are session-only: they are cleared
+  on model change and never restored on launch.
 - **Batch**: replaced the number spinner with segmented 1–4 buttons.
 - **History**: thumbnails render through a fixed 75×56 (4:3) cover-cropped
   drawing area, and existing thumbnail caches are migrated to 4:3 on first

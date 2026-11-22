@@ -470,6 +470,14 @@ fn build_ui(app: &adw::Application) {
 
     let mut config = Config::load();
     backends::sanitize_config(&mut config);
+    // LoRAs are model-specific and session-only: a restart must not restore
+    // whatever was enabled in the previous session.
+    if !config.loras.is_empty() {
+        config.loras.clear();
+        if let Err(error) = config.save() {
+            tracing::warn!(%error, "failed to save the cleared LoRA selection");
+        }
+    }
     let models_dir = resolve_models_dir(&config);
     let sd_server = resolve_sd_server(&config);
     let needs_backend = config.sd_server.is_none()
