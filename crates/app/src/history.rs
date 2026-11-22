@@ -52,6 +52,9 @@ pub struct History {
     conn: Connection,
 }
 
+/// Current on-disk schema. `0` means the file predates schema versioning.
+const SCHEMA_VERSION: i64 = 1;
+
 impl History {
     pub fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
@@ -59,6 +62,11 @@ impl History {
         }
         let conn =
             Connection::open(path).with_context(|| format!("failed to open {}", path.display()))?;
+        // Back up a legacy database before any ALTER TABLE touches it.
+        let version = schema_version(&conn)?;
+        if version < SCHEMA_VERSION && has_generations_table(&conn)? {
+            backup_before_migration(&conn, path, version)?;
+        }
         Self::from_connection(conn)
     }
 
@@ -66,75 +74,9 @@ impl History {
         Self::from_connection(Connection::open_in_memory()?)
     }
 
-    fn from_connection(conn: Connection) -> Result<Self> {
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS generations (
-                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                 prompt      TEXT    NOT NULL,
-                 model       TEXT    NOT NULL DEFAULT 'flux2-klein-4b',
-                 style       TEXT    NOT NULL DEFAULT 'none',
-                 width       INTEGER NOT NULL,
-                 height      INTEGER NOT NULL,
-                 steps       INTEGER NOT NULL,
-                 seed        TEXT    NOT NULL,
-                 created_at  INTEGER NOT NULL,
-                 duration_ms INTEGER NOT NULL,
-                 image_path  TEXT    NOT NULL,
-                 reference_path TEXT,
-                 reference_paths TEXT,
-                 kind        TEXT    NOT NULL DEFAULT 'generate',
-                 source_path TEXT,
-                 favorite    INTEGER NOT NULL DEFAULT 0
-             );
-             CREATE INDEX IF NOT EXISTS generations_created_at
-                 ON generations (created_at DESC);",
-        )?;
-        // Databases created before multi-model/style support lack these columns.
-        ensure_column(
-            &conn,
-            "generations",
-            "model",
-            "TEXT NOT NULL DEFAULT 'flux2-klein-4b'",
-        )?;
-        ensure_column(
-            &conn,
-            "generations",
-            "style",
-            "TEXT NOT NULL DEFAULT 'none'",
-        )?;
-        ensure_column(&conn, "generations", "reference_path", "TEXT")?;
-        ensure_column(&conn, "generations", "reference_paths", "TEXT")?;
-        ensure_column(
-            &conn,
-            "generations",
-            "kind",
-            "TEXT NOT NULL DEFAULT 'generate'",
-        )?;
-        ensure_column(&conn, "generations", "source_path", "TEXT")?;
-        ensure_column(
-            &conn,
-            "generations",
-            "favorite",
-            "INTEGER NOT NULL DEFAULT 0",
-        )?;
-        let added_parent = ensure_column(&conn, "generations", "parent_id", "INTEGER")?;
-        if added_parent {
-            // Older rows only kept the input path; resolve it to the entry that
-            // produced that image so existing history groups retroactively.
-            conn.execute(
-                "UPDATE generations
-                 SET parent_id = (
-                     SELECT p.id FROM generations p
-                     WHERE p.image_path = COALESCE(generations.reference_path,
-                                                  generations.source_path)
-                       AND p.id != generations.id
-                     ORDER BY p.id DESC
-                     LIMIT 1
-                 )
-                 WHERE COALESCE(reference_path, source_path) IS NOT NULL",
-                [],
-            )?;
-        }
+    fn from_connection(mut conn: Connection) -> Result<Self> {
+        migrate(&mut conn)?;
+        check_integrity(&conn)?;
         Ok(Self { conn })
     }
 
@@ -384,6 +326,126 @@ fn escape_like(text: &str) -> String {
     text.replace('\\', "\\\\")
         .replace('%', "\\%")
         .replace('_', "\\_")
+}
+
+fn schema_version(conn: &Connection) -> Result<i64> {
+    Ok(conn.query_row("PRAGMA user_version", [], |row| row.get(0))?)
+}
+
+fn has_generations_table(conn: &Connection) -> Result<bool> {
+    let count: i64 = conn.query_row(
+        "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'generations'",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
+}
+
+/// Keep the pre-migration file next to the database, one backup per version.
+fn backup_before_migration(conn: &Connection, path: &Path, version: i64) -> Result<()> {
+    let backup = path.with_extension(format!("v{version}.bak"));
+    if backup.exists() {
+        std::fs::remove_file(&backup)
+            .with_context(|| format!("failed to replace {}", backup.display()))?;
+    }
+    conn.execute(
+        "VACUUM INTO ?1",
+        params![backup.to_string_lossy().into_owned()],
+    )
+    .with_context(|| format!("failed to back up history to {}", backup.display()))?;
+    Ok(())
+}
+
+fn migrate(conn: &mut Connection) -> Result<()> {
+    let version = schema_version(conn)?;
+    if version > SCHEMA_VERSION {
+        anyhow::bail!(
+            "history database schema {version} is newer than supported ({SCHEMA_VERSION})"
+        );
+    }
+    if version == SCHEMA_VERSION {
+        return Ok(());
+    }
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    apply_schema(&tx)?;
+    tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    tx.commit()?;
+    Ok(())
+}
+
+fn apply_schema(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS generations (
+             id          INTEGER PRIMARY KEY AUTOINCREMENT,
+             prompt      TEXT    NOT NULL,
+             model       TEXT    NOT NULL DEFAULT 'flux2-klein-4b',
+             style       TEXT    NOT NULL DEFAULT 'none',
+             width       INTEGER NOT NULL,
+             height      INTEGER NOT NULL,
+             steps       INTEGER NOT NULL,
+             seed        TEXT    NOT NULL,
+             created_at  INTEGER NOT NULL,
+             duration_ms INTEGER NOT NULL,
+             image_path  TEXT    NOT NULL,
+             reference_path TEXT,
+             reference_paths TEXT,
+             kind        TEXT    NOT NULL DEFAULT 'generate',
+             source_path TEXT,
+             favorite    INTEGER NOT NULL DEFAULT 0
+         );
+         CREATE INDEX IF NOT EXISTS generations_created_at
+             ON generations (created_at DESC);",
+    )?;
+    // Databases created before multi-model/style support lack these columns.
+    ensure_column(
+        conn,
+        "generations",
+        "model",
+        "TEXT NOT NULL DEFAULT 'flux2-klein-4b'",
+    )?;
+    ensure_column(conn, "generations", "style", "TEXT NOT NULL DEFAULT 'none'")?;
+    ensure_column(conn, "generations", "reference_path", "TEXT")?;
+    ensure_column(conn, "generations", "reference_paths", "TEXT")?;
+    ensure_column(
+        conn,
+        "generations",
+        "kind",
+        "TEXT NOT NULL DEFAULT 'generate'",
+    )?;
+    ensure_column(conn, "generations", "source_path", "TEXT")?;
+    ensure_column(
+        conn,
+        "generations",
+        "favorite",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    let added_parent = ensure_column(conn, "generations", "parent_id", "INTEGER")?;
+    if added_parent {
+        // Older rows only kept the input path; resolve it to the entry that
+        // produced that image so existing history groups retroactively.
+        conn.execute(
+            "UPDATE generations
+             SET parent_id = (
+                 SELECT p.id FROM generations p
+                 WHERE p.image_path = COALESCE(generations.reference_path,
+                                              generations.source_path)
+                   AND p.id != generations.id
+                 ORDER BY p.id DESC
+                 LIMIT 1
+             )
+             WHERE COALESCE(reference_path, source_path) IS NOT NULL",
+            [],
+        )?;
+    }
+    Ok(())
+}
+
+fn check_integrity(conn: &Connection) -> Result<()> {
+    let result: String = conn.query_row("PRAGMA quick_check(1)", [], |row| row.get(0))?;
+    if result != "ok" {
+        anyhow::bail!("history database failed its integrity check: {result}");
+    }
+    Ok(())
 }
 
 fn ensure_column(conn: &Connection, table: &str, column: &str, definition: &str) -> Result<bool> {
@@ -813,5 +875,109 @@ mod tests {
             assert_eq!(HistoryFilter::from_index(index as u32), filter);
         }
         assert_eq!(HistoryFilter::from_index(99), HistoryFilter::All);
+    }
+
+    struct TempDb {
+        dir: std::path::PathBuf,
+    }
+
+    impl TempDb {
+        fn new(name: &str) -> Self {
+            let dir = std::env::temp_dir()
+                .join(format!("imagiflume-history-{}-{name}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            Self { dir }
+        }
+
+        fn path(&self) -> std::path::PathBuf {
+            self.dir.join("history.db")
+        }
+    }
+
+    impl Drop for TempDb {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    #[test]
+    fn fresh_database_is_versioned() {
+        let db = TempDb::new("fresh");
+        let history = History::open(&db.path()).unwrap();
+        assert_eq!(schema_version(&history.conn).unwrap(), SCHEMA_VERSION);
+        assert!(!db.path().with_extension("v0.bak").exists());
+    }
+
+    #[test]
+    fn legacy_database_is_backed_up_and_migrated() {
+        let db = TempDb::new("legacy");
+        let path = db.path();
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE generations (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     prompt TEXT NOT NULL,
+                     width INTEGER NOT NULL,
+                     height INTEGER NOT NULL,
+                     steps INTEGER NOT NULL,
+                     seed TEXT NOT NULL,
+                     created_at INTEGER NOT NULL,
+                     duration_ms INTEGER NOT NULL,
+                     image_path TEXT NOT NULL
+                 );
+                 INSERT INTO generations
+                     (prompt, width, height, steps, seed, created_at, duration_ms, image_path)
+                 VALUES ('old run', 512, 512, 4, '7', 10, 20, '/tmp/old.png');",
+            )
+            .unwrap();
+        }
+
+        let backup = path.with_extension("v0.bak");
+        let history = History::open(&path).unwrap();
+        assert_eq!(schema_version(&history.conn).unwrap(), SCHEMA_VERSION);
+
+        let rows = history.recent(10).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].prompt, "old run");
+        assert_eq!(rows[0].model, "flux2-klein-4b");
+
+        assert!(backup.is_file());
+        let backup_conn = Connection::open(&backup).unwrap();
+        let prompt: String = backup_conn
+            .query_row("SELECT prompt FROM generations", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(prompt, "old run");
+    }
+
+    #[test]
+    fn empty_database_is_not_backed_up() {
+        let db = TempDb::new("empty");
+        let path = db.path();
+        std::fs::write(&path, b"").unwrap();
+        let history = History::open(&path).unwrap();
+        assert_eq!(schema_version(&history.conn).unwrap(), SCHEMA_VERSION);
+        assert!(!path.with_extension("v0.bak").exists());
+    }
+
+    #[test]
+    fn corrupt_database_is_rejected() {
+        let db = TempDb::new("corrupt");
+        let path = db.path();
+        std::fs::write(&path, b"this is not a database").unwrap();
+        assert!(History::open(&path).is_err());
+    }
+
+    #[test]
+    fn newer_schema_is_rejected() {
+        let db = TempDb::new("newer");
+        let path = db.path();
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.pragma_update(None, "user_version", SCHEMA_VERSION + 1)
+                .unwrap();
+        }
+        assert!(History::open(&path).is_err());
     }
 }
