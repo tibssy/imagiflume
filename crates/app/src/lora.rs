@@ -84,11 +84,12 @@ pub(crate) fn refresh(ui: &Rc<Ui>) {
 
     let active = ui.config.borrow().loras.clone();
     let count = active.len();
-    ui.lora_summary.set_text(&match count {
-        0 => "None".to_string(),
-        1 => "1 active".to_string(),
-        count => format!("{count} active"),
-    });
+    ui.lora_count.set_text(&count.to_string());
+    if count == 0 {
+        ui.lora_count.remove_css_class("active");
+    } else {
+        ui.lora_count.add_css_class("active");
+    }
     let names: Vec<String> = active
         .iter()
         .map(|lora| {

@@ -24,7 +24,7 @@ pub(crate) struct Sidebar {
     pub random_button: gtk::Button,
     pub batch_spin: gtk::SpinButton,
     pub lora_button: gtk::Button,
-    pub lora_summary: gtk::Label,
+    pub lora_count: gtk::Label,
     pub new_button: gtk::Button,
     pub open_button: gtk::Button,
     pub select_button: gtk::Button,
@@ -236,32 +236,32 @@ pub(crate) fn build(
         .build();
     batch_row.append(&batch_hint);
 
-    let lora_summary = gtk::Label::builder()
-        .label("None")
-        .xalign(0.0)
-        .hexpand(true)
-        .css_classes(["caption", "dim-label"])
+    let lora_count = gtk::Label::builder()
+        .label("0")
+        .valign(gtk::Align::Center)
+        .css_classes(["count-pill"])
         .build();
-    let lora_content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    lora_content.set_hexpand(true);
-    lora_content.append(&field_label("LoRAs"));
-    lora_content.append(&lora_summary);
-    let lora_chevron = gtk::Image::from_icon_name("go-next-symbolic");
-    lora_chevron.set_pixel_size(14);
-    lora_chevron.add_css_class("dim-label");
-    lora_content.append(&lora_chevron);
+    let lora_icon = gtk::Image::from_icon_name("application-x-addon-symbolic");
+    lora_icon.set_pixel_size(16);
+    let lora_content = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    lora_content.set_valign(gtk::Align::Center);
+    lora_content.append(&lora_icon);
+    lora_content.append(&lora_count);
     let lora_button = gtk::Button::builder()
-        .hexpand(true)
         .tooltip_text("Manage LoRAs")
+        .valign(gtk::Align::Center)
         .css_classes(["flat"])
         .child(&lora_content)
         .build();
+    let model_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    model_row.set_hexpand(true);
+    model_row.append(&model_dropdown);
+    model_row.append(&lora_button);
 
     let setup = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    setup.append(&row("Model", &model_dropdown));
+    setup.append(&row("Model", &model_row));
     setup.append(&model_hint);
     setup.append(&row("Style", &style_dropdown));
-    setup.append(&lora_button);
 
     let size_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     size_row.append(&field_label("Size"));
@@ -506,7 +506,7 @@ pub(crate) fn build(
         random_button,
         batch_spin,
         lora_button,
-        lora_summary,
+        lora_count,
         new_button,
         open_button,
         select_button,
