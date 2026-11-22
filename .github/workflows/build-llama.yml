@@ -1,0 +1,132 @@
+name: Build llama.cpp helpers
+
+# Static, OpenSSL-free llama-cli builds for prompt improvement. The upstream
+# release binaries link libssl/libcrypto, which breaks minimal Fedora installs;
+# these builds use the same flags as the Flatpak.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to upload to (leave empty to keep artifacts only)"
+        required: false
+        default: ""
+  push:
+    tags:
+      - "backends-llama-*"
+
+permissions:
+  contents: write
+
+env:
+  LLAMA_COMMIT: c56be864f482dc88a6d62a0816a265034941935f
+  LLAMA_BUILD: c56be86
+
+jobs:
+  llama:
+    name: llama.cpp ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: cpu
+            cmake: ""
+            packages: ""
+          - name: vulkan
+            cmake: "-DGGML_VULKAN=ON"
+            packages: "libvulkan-dev glslc"
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Imagiflume
+        uses: actions/checkout@v4
+
+      - name: Checkout llama.cpp
+        uses: actions/checkout@v4
+        with:
+          repository: ggml-org/llama.cpp
+          ref: ${{ env.LLAMA_COMMIT }}
+          path: llama
+          submodules: recursive
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ${{ matrix.packages }}
+
+      - name: Configure
+        working-directory: llama
+        run: |
+          cmake -S . -B build -G "Unix Makefiles" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DLLAMA_BUILD_IS_DEV=OFF \
+            -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_BUILD_EXAMPLES=OFF \
+            -DLLAMA_BUILD_TOOLS=ON \
+            -DLLAMA_BUILD_SERVER=ON \
+            -DLLAMA_BUILD_APP=OFF \
+            -DLLAMA_OPENSSL=OFF \
+            -DLLAMA_USE_PREBUILT_UI=OFF \
+            -DGGML_NATIVE=OFF \
+            -DGGML_SSE42=ON \
+            -DGGML_AVX=ON \
+            -DGGML_AVX2=ON \
+            -DGGML_BMI2=ON \
+            -DGGML_FMA=ON \
+            -DGGML_F16C=ON \
+            -DGGML_OPENMP=ON \
+            ${{ matrix.cmake }}
+
+      - name: Build llama-cli
+        working-directory: llama
+        run: cmake --build build --config Release --target llama-cli -j"$(nproc)"
+
+      - name: Verify no OpenSSL or CURL dependency
+        working-directory: llama
+        run: |
+          set -euo pipefail
+          test -x build/bin/llama-cli
+          if ldd build/bin/llama-cli | grep -Eq "libssl|libcrypto|libcurl"; then
+            echo "unexpected SSL/CURL dependency:"
+            ldd build/bin/llama-cli | grep -E "libssl|libcrypto|libcurl"
+            exit 1
+          fi
+          objdump -T build/bin/llama-cli | grep -o "GLIBC_[0-9.]*" | sort -Vu | tail -1
+
+      - name: Package
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="llama-${LLAMA_BUILD}-linux-x64-${{ matrix.name }}"
+          dist="$GITHUB_WORKSPACE/dist"
+          mkdir -p "$dist/$name"
+          cp llama/build/bin/llama-cli "$dist/$name/"
+          strip "$dist/$name/llama-cli"
+          cp llama/LICENSE "$dist/$name/" 2>/dev/null || true
+          tar -C "$dist" -czf "$dist/${name}.tar.gz" "$name"
+          sha=$(sha256sum "$dist/${name}.tar.gz" | cut -d' ' -f1)
+          size=$(stat -c%s "$dist/${name}.tar.gz")
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          echo "size=${size}" >> "$GITHUB_OUTPUT"
+          echo "${name}: ${sha} (${size} bytes)"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: dist/*
+
+      - name: Upload release assets
+        if: ${{ github.ref_type == 'tag' || inputs.release_tag != '' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          name: "llama.cpp helpers ${{ env.LLAMA_BUILD }}"
+          prerelease: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/*.tar.gz
