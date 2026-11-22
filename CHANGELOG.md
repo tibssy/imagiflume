@@ -12,8 +12,9 @@ rough edges.
   weights and folder controls. Changing the model clears active LoRAs because
   weights are model-specific.
 - **Batch**: replaced the number spinner with segmented 1–4 buttons.
-- **History**: thumbnails are now cropped to a consistent 1:1 square; favorite,
-  details and delete sit in a top-right row, while chain count pills sit at the
+- **History**: thumbnails are cropped to a consistent 1:1 square; every row,
+  including chain children, uses the same content height. Favorite, details and
+  delete sit in a top-right row; chain count pills hug their content at the
   bottom right of grouped entries.
 - **New icon**: the cream "if" monogram is now the app icon, with the same
   mark on the About page.

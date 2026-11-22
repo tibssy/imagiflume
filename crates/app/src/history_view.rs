@@ -296,14 +296,12 @@ fn build_row_box(ui: &Rc<Ui>, entry: &Generation, depth: usize, group: RowGroup)
     let first_in_chain = group.first_in_chain;
 
     let row_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    row_box.set_margin_top(6);
+    row_box.set_margin_bottom(6);
+    row_box.set_height_request(56);
     if depth > 0 {
-        // Tighter rows inside a chain so the group reads as one block.
-        row_box.set_margin_top(3);
-        row_box.set_margin_bottom(3);
+        // Keep the chain visual grouping without changing the row height.
         row_box.add_css_class("chain-child");
-    } else {
-        row_box.set_margin_top(6);
-        row_box.set_margin_bottom(6);
     }
     row_box.set_margin_start(8 + depth as i32 * 8);
     row_box.set_margin_end(8);
@@ -408,6 +406,7 @@ fn build_chain_header(
     expander.set_activatable(false);
     if let Some(header) = expander_header_row(&expander) {
         header.set_activatable(false);
+        header.set_height_request(56);
     }
 
     {
@@ -487,15 +486,18 @@ fn build_chain_header(
     }
     // Actions sit at the top right; the count/arrow pill sits at the bottom
     // right so grouped rows keep a consistent silhouette.
-    let side = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    let side = gtk::Box::new(gtk::Orientation::Vertical, 0);
     side.set_valign(gtk::Align::Fill);
     side.set_halign(gtk::Align::End);
-    side.set_margin_top(4);
-    side.set_margin_bottom(4);
+    side.set_hexpand(false);
+    side.set_margin_top(2);
+    side.set_margin_bottom(2);
     let actions = history_actions(ui, entry, selecting);
     actions.set_valign(gtk::Align::Start);
     side.append(&actions);
     let toggle = chain_toggle_button(group_size, collapsed);
+    toggle.0.set_halign(gtk::Align::End);
+    toggle.0.set_hexpand(false);
     toggle.0.set_valign(gtk::Align::End);
     side.append(&toggle.0);
     ui.chain_toggles.borrow_mut().insert(root, toggle.clone());
@@ -559,8 +561,8 @@ fn build_chain_header(
     expander
 }
 
-fn history_thumbnail(entry: &Generation, depth: usize) -> gtk::AspectFrame {
-    let size = if depth > 0 { 44 } else { 56 };
+fn history_thumbnail(entry: &Generation, _depth: usize) -> gtk::AspectFrame {
+    let size = 56;
     let frame = gtk::AspectFrame::builder()
         .ratio(1.0)
         .obey_child(false)
