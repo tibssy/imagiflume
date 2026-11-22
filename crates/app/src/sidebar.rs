@@ -512,10 +512,16 @@ pub(crate) fn build(
 
     let history_separator = gtk::Separator::new(gtk::Orientation::Horizontal);
 
+    // AdwExpanderRow is a GtkListBoxRow and warns when parented to a box.
+    let queue_wrapper = gtk::ListBox::builder()
+        .selection_mode(gtk::SelectionMode::None)
+        .build();
+    queue_wrapper.append(&queue_expander);
+
     root.append(&setup_title);
     root.append(&setup);
     root.append(&separator);
-    root.append(&queue_expander);
+    root.append(&queue_wrapper);
     root.append(&history_separator);
     root.append(&history_header);
     root.append(&history_search_revealer);

@@ -465,6 +465,7 @@ fn show_preferences_inner(ui: &Rc<Ui>, focus_models: bool) {
     let refresh_upscalers: Rc<dyn Fn()> = {
         let rows = upscaler_rows.clone();
         let models_dir = ui.models_dir.clone();
+        let ui = ui.clone();
         Rc::new(move || {
             for entry in rows.borrow().iter() {
                 let installed = entry.preset.is_installed(&models_dir);
@@ -476,6 +477,7 @@ fn show_preferences_inner(ui: &Rc<Ui>, focus_models: bool) {
                 entry.delete_button.set_visible(installed);
                 entry.delete_button.set_sensitive(installed);
             }
+            crate::update_image_actions(&ui);
         })
     };
     refresh_upscalers();

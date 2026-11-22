@@ -16,7 +16,10 @@ rough edges.
   **Copy diagnostics** action that includes the version, channel, locale, GPU,
   backend, paths and log locations.
 - **Canvas**: the upscale button is hidden when no upscaler weights are
-  installed.
+  installed and appears (or disappears) immediately after downloading or
+  deleting one in Preferences.
+- **Queue**: the queue expander is hosted in a list box, so Adwaita no longer
+  warns that an `AdwExpanderRow` was placed into a `GtkBox`.
 - **llama.cpp plumbing**: the CPU and Vulkan helpers are now static
   `LLAMA_OPENSSL=OFF` builds, so they no longer require `libssl` on minimal
   distros. The ROCm/CUDA helpers still declare `libssl.so.3`, and a prompt
