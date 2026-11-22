@@ -221,20 +221,52 @@ pub(crate) fn build(
     seed_row.append(&random_button);
 
     let batch_spin = gtk::SpinButton::with_range(1.0, 4.0, 1.0);
-    batch_spin.set_value(config.batch_count.clamp(1, 4) as f64);
-    batch_spin.set_width_chars(2);
-    batch_spin.set_valign(gtk::Align::Center);
+    let batch_count = config.batch_count.clamp(1, 4);
+    batch_spin.set_value(batch_count as f64);
     batch_spin.set_tooltip_text(Some("Images to queue per Generate"));
+    let batch_choices = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    batch_choices.set_hexpand(true);
+    batch_choices.set_homogeneous(true);
+    let batch_buttons: Rc<Vec<gtk::ToggleButton>> = Rc::new(
+        (1u32..=4)
+            .map(|count| {
+                gtk::ToggleButton::builder()
+                    .label(count.to_string())
+                    .active(count == batch_count)
+                    .tooltip_text(format!(
+                        "Queue {count} image{} per Generate",
+                        if count == 1 { "" } else { "s" }
+                    ))
+                    .css_classes(["batch-choice"])
+                    .build()
+            })
+            .collect(),
+    );
+    for (index, button) in batch_buttons.iter().enumerate() {
+        let batch_buttons = batch_buttons.clone();
+        let batch_spin = batch_spin.clone();
+        let count = index as u32 + 1;
+        button.connect_toggled(move |button| {
+            if !button.is_active() {
+                if !batch_buttons.iter().any(|other| other.is_active()) {
+                    button.set_active(true);
+                }
+                return;
+            }
+            for (other_index, other) in batch_buttons.iter().enumerate() {
+                if other_index as u32 + 1 != count {
+                    other.set_active(false);
+                }
+            }
+            batch_spin.set_value(count as f64);
+        });
+    }
+    for button in batch_buttons.iter() {
+        batch_choices.append(button);
+    }
     let batch_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     batch_row.append(&field_label("Batch"));
-    batch_row.append(&batch_spin);
-    let batch_hint = gtk::Label::builder()
-        .label("images")
-        .xalign(0.0)
-        .hexpand(true)
-        .css_classes(["caption", "dim-label"])
-        .build();
-    batch_row.append(&batch_hint);
+    batch_row.append(&batch_choices);
 
     let lora_count = gtk::Label::builder()
         .label("0")

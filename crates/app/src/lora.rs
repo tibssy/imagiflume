@@ -1,8 +1,8 @@
 //! LoRA library management.
 //!
 //! Weights live in a folder next to the models (`models/loras` by default).
-//! The sidebar row opens Preferences → LoRAs, where LoRAs are selected,
-//! searched and weighted.
+//! The sidebar button opens the LoRA manager dialog, where LoRAs are
+//! selected, searched and weighted.
 
 use std::cell::{Cell, RefCell};
 use std::fs::File;
@@ -124,12 +124,27 @@ fn apply_filter(rows: &Rc<RefCell<Vec<(gtk::Widget, String)>>>, text: &str) {
     }
 }
 
-/// Preferences → LoRAs page.
-pub(crate) fn build_page(ui: &Rc<Ui>) -> adw::PreferencesPage {
-    let page = adw::PreferencesPage::builder()
+/// LoRA manager dialog.
+pub(crate) fn show_dialog(ui: &Rc<Ui>) {
+    let dialog = gtk::Window::builder()
         .title("LoRAs")
-        .icon_name("application-x-addon-symbolic")
+        .modal(true)
+        .transient_for(&ui.window)
+        .default_width(620)
+        .default_height(700)
         .build();
+    let header = adw::HeaderBar::new();
+    header.set_title_widget(Some(&adw::WindowTitle::new(
+        "LoRAs",
+        "Active weights for the current model",
+    )));
+    dialog.set_titlebar(Some(&header));
+    dialog.set_child(Some(&build_page(ui)));
+    dialog.present();
+}
+
+fn build_page(ui: &Rc<Ui>) -> adw::PreferencesPage {
+    let page = adw::PreferencesPage::new();
 
     let folder = ui.lora_dir.clone();
     if let Err(error) = std::fs::create_dir_all(&folder) {

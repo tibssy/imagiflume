@@ -6,11 +6,12 @@ rough edges.
 ## Unreleased
 
 - **Sidebar setup**: removed the installed-model caption, increased the spacing
-  between controls, and moved LoRAs directly under Style.
-- **LoRAs**: a LoRA icon button next to the model dropdown shows the active
-  count and opens **Preferences → LoRAs**, where files can be searched,
-  selected with checkboxes and weighted. The dropdown/chip selector and old
-  popup are gone.
+  between controls, and put the model dropdown and a LoRA icon/count button on
+  one row.
+- **LoRAs**: the icon opens a dedicated LoRA dialog with search, checkboxes,
+  weights and folder controls. Changing the model clears active LoRAs because
+  weights are model-specific.
+- **Batch**: replaced the number spinner with segmented 1–4 buttons.
 - **New icon**: the cream "if" monogram is now the app icon, with the same
   mark on the About page.
 - **Renamed to Imagiflume**: the app ID is now

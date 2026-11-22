@@ -400,6 +400,25 @@ fn install_styles() {
              background-color: alpha(@accent_bg_color, 0.25);
              color: @accent_color;
          }
+         .batch-choice {
+             min-width: 32px;
+             min-height: 30px;
+             padding: 0;
+             border: none;
+             border-radius: 8px;
+             background-image: none;
+             background-color: alpha(@view_fg_color, 0.08);
+             box-shadow: none;
+             font-weight: bold;
+         }
+         .batch-choice:hover {
+             background-color: alpha(@view_fg_color, 0.14);
+         }
+         .batch-choice:checked {
+             background-color: alpha(@accent_bg_color, 0.28);
+             color: @accent_color;
+             box-shadow: inset 0 0 0 2px @accent_color;
+         }
          .chain-child:hover {
              background-color: alpha(@window_fg_color, 0.06);
              border-radius: 8px;
@@ -879,7 +898,7 @@ fn wire_events(ui: &Rc<Ui>, preferences_button: &gtk::Button) {
         let ui = ui.clone();
         ui.lora_button
             .clone()
-            .connect_clicked(move |_| preferences::show_loras(&ui));
+            .connect_clicked(move |_| lora::show_dialog(&ui));
     }
     {
         let ui = ui.clone();
@@ -1004,10 +1023,18 @@ fn wire_events(ui: &Rc<Ui>, preferences_button: &gtk::Button) {
                 return;
             };
             dropdown.set_tooltip_text(Some(model.description));
-            {
+            let cleared_loras = {
                 let mut config = ui.config.borrow_mut();
                 config.active_preset = model.id.to_string();
+                let cleared = !config.loras.is_empty();
+                config.loras.clear();
                 let _ = config.save();
+                cleared
+            };
+            if cleared_loras {
+                ui.toast
+                    .add_toast(adw::Toast::new("LoRAs cleared for the new model."));
+                lora::refresh(&ui);
             }
             // Free the previous model right away instead of waiting for the
             // idle timeout.
