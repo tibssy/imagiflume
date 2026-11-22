@@ -132,3 +132,214 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             dist/*.tar.gz
+
+  cuda:
+    name: llama.cpp ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: cuda12
+            runner: ubuntu-22.04
+            cuda: "12.8.1"
+            archs: "52;61;70;75;80;86;89;90"
+          - name: cuda13
+            runner: ubuntu-24.04
+            cuda: "13.0.0"
+            archs: "75;80;86;89;90;100;120"
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - name: Checkout Imagiflume
+        uses: actions/checkout@v4
+
+      - name: Checkout llama.cpp
+        uses: actions/checkout@v4
+        with:
+          repository: ggml-org/llama.cpp
+          ref: ${{ env.LLAMA_COMMIT }}
+          path: llama
+          submodules: recursive
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential cmake
+
+      - name: Install CUDA ${{ matrix.cuda }}
+        uses: Jimver/cuda-toolkit@v0.2.36
+        with:
+          cuda: ${{ matrix.cuda }}
+          method: network
+          sub-packages: '["nvcc", "cudart", "cudart-dev", "cccl"]'
+          non-cuda-sub-packages: '["libcublas", "libcublas-dev"]'
+
+      - name: Configure
+        working-directory: llama
+        run: |
+          cmake -S . -B build -G "Unix Makefiles" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DLLAMA_BUILD_IS_DEV=OFF \
+            -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_BUILD_EXAMPLES=OFF \
+            -DLLAMA_BUILD_TOOLS=ON \
+            -DLLAMA_BUILD_SERVER=ON \
+            -DLLAMA_BUILD_APP=OFF \
+            -DLLAMA_OPENSSL=OFF \
+            -DLLAMA_USE_PREBUILT_UI=OFF \
+            -DGGML_NATIVE=OFF \
+            -DGGML_OPENMP=ON \
+            -DGGML_CUDA=ON \
+            -DCMAKE_CUDA_ARCHITECTURES='${{ matrix.archs }}'
+
+      - name: Build llama-cli
+        working-directory: llama
+        run: cmake --build build --config Release --target llama-cli -j"$(nproc)"
+
+      - name: Verify no OpenSSL or CURL dependency
+        working-directory: llama
+        run: |
+          set -euo pipefail
+          test -x build/bin/llama-cli
+          if ldd build/bin/llama-cli | grep -Eq "libssl|libcrypto|libcurl"; then
+            echo "unexpected SSL/CURL dependency:"
+            ldd build/bin/llama-cli | grep -E "libssl|libcrypto|libcurl"
+            exit 1
+          fi
+          ldd build/bin/llama-cli | grep -E "cudart|cuda" || echo "statically linked CUDA runtime"
+
+      - name: Package
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="llama-${LLAMA_BUILD}-linux-x64-${{ matrix.name }}"
+          dist="$GITHUB_WORKSPACE/dist"
+          mkdir -p "$dist/$name"
+          cp llama/build/bin/llama-cli "$dist/$name/"
+          strip "$dist/$name/llama-cli"
+          cp llama/LICENSE "$dist/$name/" 2>/dev/null || true
+          tar -C "$dist" -czf "$dist/${name}.tar.gz" "$name"
+          sha=$(sha256sum "$dist/${name}.tar.gz" | cut -d' ' -f1)
+          size=$(stat -c%s "$dist/${name}.tar.gz")
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          echo "size=${size}" >> "$GITHUB_OUTPUT"
+          echo "${name}: ${sha} (${size} bytes)"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: dist/*
+
+      - name: Upload release assets
+        if: ${{ github.ref_type == 'tag' || inputs.release_tag != '' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          name: "llama.cpp helpers ${{ env.LLAMA_BUILD }}"
+          prerelease: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/*.tar.gz
+
+  rocm:
+    name: llama.cpp rocm10
+    runs-on: ubuntu-22.04
+    container:
+      image: rocm/dev-ubuntu-22.04:10.0.0-full
+    timeout-minutes: 180
+    env:
+      HIP_PATH: /opt/rocm
+    steps:
+      - name: Checkout Imagiflume
+        uses: actions/checkout@v4
+
+      - name: Checkout llama.cpp
+        uses: actions/checkout@v4
+        with:
+          repository: ggml-org/llama.cpp
+          ref: ${{ env.LLAMA_COMMIT }}
+          path: llama
+          submodules: recursive
+
+      - name: Install build tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential cmake
+
+      - name: Configure
+        working-directory: llama
+        run: |
+          export PATH="/opt/rocm/bin:$PATH"
+          cmake -S . -B build -G "Unix Makefiles" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DLLAMA_BUILD_IS_DEV=OFF \
+            -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_BUILD_EXAMPLES=OFF \
+            -DLLAMA_BUILD_TOOLS=ON \
+            -DLLAMA_BUILD_SERVER=ON \
+            -DLLAMA_BUILD_APP=OFF \
+            -DLLAMA_OPENSSL=OFF \
+            -DLLAMA_USE_PREBUILT_UI=OFF \
+            -DGGML_NATIVE=OFF \
+            -DGGML_OPENMP=ON \
+            -DGGML_HIP=ON \
+            -DGPU_TARGETS="gfx90a;gfx1030;gfx1100;gfx1101;gfx1102;gfx1200;gfx1201"
+
+      - name: Build llama-cli
+        working-directory: llama
+        run: |
+          export PATH="/opt/rocm/bin:$PATH"
+          cmake --build build --config Release --target llama-cli -j"$(nproc)"
+
+      - name: Verify no OpenSSL or CURL dependency
+        working-directory: llama
+        run: |
+          set -euo pipefail
+          test -x build/bin/llama-cli
+          if ldd build/bin/llama-cli | grep -Eq "libssl|libcrypto|libcurl"; then
+            echo "unexpected SSL/CURL dependency:"
+            ldd build/bin/llama-cli | grep -E "libssl|libcrypto|libcurl"
+            exit 1
+          fi
+          ldd build/bin/llama-cli | grep -E "amdhip|rocm" || true
+
+      - name: Package
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="llama-${LLAMA_BUILD}-linux-x64-rocm10"
+          dist="$GITHUB_WORKSPACE/dist"
+          mkdir -p "$dist/$name"
+          cp llama/build/bin/llama-cli "$dist/$name/"
+          strip "$dist/$name/llama-cli"
+          cp llama/LICENSE "$dist/$name/" 2>/dev/null || true
+          tar -C "$dist" -czf "$dist/${name}.tar.gz" "$name"
+          sha=$(sha256sum "$dist/${name}.tar.gz" | cut -d' ' -f1)
+          size=$(stat -c%s "$dist/${name}.tar.gz")
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          echo "size=${size}" >> "$GITHUB_OUTPUT"
+          echo "${name}: ${sha} (${size} bytes)"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: dist/*
+
+      - name: Upload release assets
+        if: ${{ github.ref_type == 'tag' || inputs.release_tag != '' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          name: "llama.cpp helpers ${{ env.LLAMA_BUILD }}"
+          prerelease: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/*.tar.gz
