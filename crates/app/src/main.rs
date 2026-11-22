@@ -228,11 +228,8 @@ pub(crate) struct Ui {
     pub seed_entry: gtk::Entry,
     pub random_button: gtk::Button,
     pub batch_spin: gtk::SpinButton,
-    pub lora_dropdown: gtk::DropDown,
-    pub lora_add: gtk::Button,
-    pub lora_chips: gtk::FlowBox,
-    pub lora_empty: gtk::Label,
-    pub lora_choices: Rc<RefCell<Vec<String>>>,
+    pub lora_button: gtk::Button,
+    pub lora_summary: gtk::Label,
     /// Resolved folder scanned for LoRA weights.
     pub lora_dir: PathBuf,
     /// Server log position before the running job, used to catch LoRAs the
@@ -390,11 +387,6 @@ fn install_styles() {
          }
          .chain-toggle:hover {
              background-color: alpha(@accent_bg_color, 0.3);
-         }
-         .lora-chip {
-             background-color: alpha(@view_fg_color, 0.10);
-             border-radius: 999px;
-             padding: 3px 4px 3px 10px;
          }
          .chain-child:hover {
              background-color: alpha(@window_fg_color, 0.06);
@@ -675,11 +667,8 @@ fn build_ui(app: &adw::Application) {
         seed_entry: side.seed_entry,
         random_button: side.random_button,
         batch_spin: side.batch_spin,
-        lora_dropdown: side.lora_dropdown,
-        lora_add: side.lora_add,
-        lora_chips: side.lora_chips,
-        lora_empty: side.lora_empty,
-        lora_choices: side.lora_choices,
+        lora_button: side.lora_button,
+        lora_summary: side.lora_summary,
         lora_dir,
         lora_log_offset: Cell::new(None),
         state: RefCell::new(AppState::default()),
@@ -876,15 +865,9 @@ fn wire_events(ui: &Rc<Ui>, preferences_button: &gtk::Button) {
     }
     {
         let ui = ui.clone();
-        ui.lora_add
+        ui.lora_button
             .clone()
-            .connect_clicked(move |_| lora::add_selected(&ui));
-    }
-    {
-        let ui = ui.clone();
-        ui.lora_dropdown
-            .clone()
-            .connect_selected_notify(move |_| lora::update_add_sensitivity(&ui));
+            .connect_clicked(move |_| preferences::show_loras(&ui));
     }
     {
         let ui = ui.clone();

@@ -23,11 +23,8 @@ pub(crate) struct Sidebar {
     pub seed_entry: gtk::Entry,
     pub random_button: gtk::Button,
     pub batch_spin: gtk::SpinButton,
-    pub lora_dropdown: gtk::DropDown,
-    pub lora_add: gtk::Button,
-    pub lora_chips: gtk::FlowBox,
-    pub lora_empty: gtk::Label,
-    pub lora_choices: Rc<RefCell<Vec<String>>>,
+    pub lora_button: gtk::Button,
+    pub lora_summary: gtk::Label,
     pub new_button: gtk::Button,
     pub open_button: gtk::Button,
     pub select_button: gtk::Button,
@@ -239,39 +236,32 @@ pub(crate) fn build(
         .build();
     batch_row.append(&batch_hint);
 
-    let lora_dropdown = gtk::DropDown::from_strings(&[]);
-    lora_dropdown.set_hexpand(true);
-    lora_dropdown.set_tooltip_text(Some("Choose a LoRA to add"));
-    let lora_add = gtk::Button::builder()
-        .icon_name("list-add-symbolic")
-        .tooltip_text("Add the selected LoRA")
-        .css_classes(["flat"])
-        .build();
-    let lora_controls = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    lora_controls.append(&lora_dropdown);
-    lora_controls.append(&lora_add);
-    let lora_chips = gtk::FlowBox::builder()
-        .selection_mode(gtk::SelectionMode::None)
-        .max_children_per_line(2)
-        .column_spacing(6)
-        .row_spacing(6)
-        .homogeneous(false)
-        .build();
-    let lora_empty = gtk::Label::builder()
-        .label("None selected")
+    let lora_summary = gtk::Label::builder()
+        .label("None")
         .xalign(0.0)
+        .hexpand(true)
         .css_classes(["caption", "dim-label"])
         .build();
-    let lora_section = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    lora_section.append(&row("LoRAs", &lora_controls));
-    lora_section.append(&lora_chips);
-    lora_section.append(&lora_empty);
+    let lora_content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    lora_content.set_hexpand(true);
+    lora_content.append(&field_label("LoRAs"));
+    lora_content.append(&lora_summary);
+    let lora_chevron = gtk::Image::from_icon_name("go-next-symbolic");
+    lora_chevron.set_pixel_size(14);
+    lora_chevron.add_css_class("dim-label");
+    lora_content.append(&lora_chevron);
+    let lora_button = gtk::Button::builder()
+        .hexpand(true)
+        .tooltip_text("Manage LoRAs")
+        .css_classes(["flat"])
+        .child(&lora_content)
+        .build();
 
     let setup = gtk::Box::new(gtk::Orientation::Vertical, 12);
     setup.append(&row("Model", &model_dropdown));
     setup.append(&model_hint);
     setup.append(&row("Style", &style_dropdown));
-    setup.append(&lora_section);
+    setup.append(&lora_button);
 
     let size_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     size_row.append(&field_label("Size"));
@@ -515,11 +505,8 @@ pub(crate) fn build(
         seed_entry,
         random_button,
         batch_spin,
-        lora_dropdown,
-        lora_add,
-        lora_chips,
-        lora_empty,
-        lora_choices: Rc::new(RefCell::new(Vec::new())),
+        lora_button,
+        lora_summary,
         new_button,
         open_button,
         select_button,

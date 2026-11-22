@@ -140,6 +140,14 @@ fn upscaler_status(preset: &UpscalerPreset, models_dir: &Path) -> String {
 }
 
 pub(crate) fn show_preferences(ui: &Rc<Ui>, focus_models: bool) {
+    show_preferences_inner(ui, focus_models, false);
+}
+
+pub(crate) fn show_loras(ui: &Rc<Ui>) {
+    show_preferences_inner(ui, false, true);
+}
+
+fn show_preferences_inner(ui: &Rc<Ui>, focus_models: bool, focus_loras: bool) {
     let dialog = adw::PreferencesDialog::builder()
         .title("Preferences")
         .search_enabled(false)
@@ -594,7 +602,8 @@ pub(crate) fn show_preferences(ui: &Rc<Ui>, focus_models: bool) {
     }
 
     dialog.add(&models_page);
-    dialog.add(&crate::lora::build_page(ui));
+    let lora_page = crate::lora::build_page(ui);
+    dialog.add(&lora_page);
     dialog.add(&crate::backends::build_page(ui));
 
     let about = adw::PreferencesPage::builder()
@@ -910,6 +919,8 @@ pub(crate) fn show_preferences(ui: &Rc<Ui>, focus_models: bool) {
 
     if focus_models {
         dialog.set_visible_page(&models_page);
+    } else if focus_loras {
+        dialog.set_visible_page(&lora_page);
     }
     dialog.present(Some(&ui.window));
 }

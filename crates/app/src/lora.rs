@@ -1,10 +1,10 @@
-//! LoRA selection and weight settings.
+//! LoRA library management.
 //!
 //! Weights live in a folder next to the models (`models/loras` by default).
-//! The sidebar selects the active LoRAs; Preferences → LoRAs holds the folder
-//! controls and the weight of each active LoRA.
+//! The sidebar row opens Preferences → LoRAs, where LoRAs are selected,
+//! searched and weighted.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -19,7 +19,6 @@ use crate::Ui;
 struct Entry {
     path: String,
     file_name: String,
-    label: String,
     size: u64,
     validation: Result<(), String>,
 }
@@ -40,17 +39,11 @@ fn scan(folder: &Path) -> Vec<Entry> {
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_else(|| relative.clone());
-            let label = Path::new(&file_name)
-                .file_stem()
-                .map(|name| name.to_string_lossy().into_owned())
-                .filter(|name| !name.is_empty())
-                .unwrap_or_else(|| file_name.clone());
             let size = std::fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
             let validation = validate(folder, &relative);
             Entry {
                 path: relative,
                 file_name,
-                label,
                 size,
                 validation,
             }
@@ -58,23 +51,14 @@ fn scan(folder: &Path) -> Vec<Entry> {
         .collect()
 }
 
-fn current_choice(ui: &Rc<Ui>) -> Option<String> {
-    let selected = ui.lora_dropdown.selected();
-    if selected == gtk::INVALID_LIST_POSITION {
-        return None;
-    }
-    ui.lora_choices.borrow().get(selected as usize).cloned()
-}
-
-/// Refresh the sidebar dropdown, chips and empty state.
+/// Update the sidebar summary after the selection changes.
 pub(crate) fn refresh(ui: &Rc<Ui>) {
     let entries = scan(&ui.lora_dir);
-    let usable: Vec<Entry> = entries
+    let usable_paths: Vec<&str> = entries
         .iter()
         .filter(|entry| entry.validation.is_ok())
-        .cloned()
+        .map(|entry| entry.path.as_str())
         .collect();
-    let usable_paths: Vec<&str> = usable.iter().map(|entry| entry.path.as_str()).collect();
 
     let removed: Vec<String> = {
         let mut config = ui.config.borrow_mut();
@@ -98,66 +82,27 @@ pub(crate) fn refresh(ui: &Rc<Ui>) {
         removed
     };
 
-    let current = current_choice(ui);
-    if usable_paths.is_empty() {
-        let model = gtk::StringList::new(&["No LoRAs installed"]);
-        ui.lora_dropdown.set_model(Some(&model));
-        ui.lora_dropdown.set_selected(0);
-        ui.lora_dropdown.set_sensitive(false);
-        ui.lora_choices.borrow_mut().clear();
-    } else {
-        let model = gtk::StringList::new(&usable_paths);
-        ui.lora_dropdown.set_model(Some(&model));
-        *ui.lora_choices.borrow_mut() = usable_paths.iter().map(|path| path.to_string()).collect();
-        let index = current
-            .and_then(|path| usable_paths.iter().position(|candidate| *candidate == path))
-            .unwrap_or(0);
-        ui.lora_dropdown.set_selected(index as u32);
-        ui.lora_dropdown.set_sensitive(true);
-    }
-
-    while let Some(child) = ui.lora_chips.first_child() {
-        ui.lora_chips.remove(&child);
-    }
     let active = ui.config.borrow().loras.clone();
-    for lora in &active {
-        let Some(entry) = usable.iter().find(|entry| entry.path == lora.path) else {
-            continue;
-        };
-        let chip = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-        chip.add_css_class("lora-chip");
-        chip.set_valign(gtk::Align::Center);
-        chip.set_tooltip_text(Some(&format!("{} · weight {:.2}", lora.path, lora.weight)));
-        let label = gtk::Label::new(Some(&entry.label));
-        label.add_css_class("caption");
-        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        label.set_max_width_chars(18);
-        chip.append(&label);
-        let remove = gtk::Button::builder()
-            .icon_name("window-close-symbolic")
-            .tooltip_text("Remove this LoRA")
-            .valign(gtk::Align::Center)
-            .css_classes(["flat"])
-            .build();
-        {
-            let ui = ui.clone();
-            let path = lora.path.clone();
-            remove.connect_clicked(move |_| {
-                if set_lora(&ui, &path, None) {
-                    refresh(&ui);
-                }
-            });
-        }
-        chip.append(&remove);
-        ui.lora_chips.insert(&chip, -1);
-    }
-
-    if active.is_empty() && !usable.is_empty() {
-        ui.lora_empty.set_text("None selected");
-        ui.lora_empty.set_visible(true);
+    let count = active.len();
+    ui.lora_summary.set_text(&match count {
+        0 => "None".to_string(),
+        1 => "1 active".to_string(),
+        count => format!("{count} active"),
+    });
+    let names: Vec<String> = active
+        .iter()
+        .map(|lora| {
+            Path::new(&lora.path)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| lora.path.clone())
+        })
+        .collect();
+    ui.lora_button.set_tooltip_text(Some(&if names.is_empty() {
+        "Manage LoRAs".to_string()
     } else {
-        ui.lora_empty.set_visible(false);
-    }
+        format!("Manage LoRAs · active: {}", names.join(", "))
+    }));
 
     if !removed.is_empty() {
         ui.toast.add_toast(adw::Toast::new(&format!(
@@ -165,43 +110,16 @@ pub(crate) fn refresh(ui: &Rc<Ui>) {
             removed.join(", ")
         )));
     }
-    update_add_sensitivity(ui);
 }
 
-pub(crate) fn update_add_sensitivity(ui: &Rc<Ui>) {
-    let selected = current_choice(ui);
-    let active = selected.as_ref().is_some_and(|path| {
-        ui.config
-            .borrow()
-            .loras
-            .iter()
-            .any(|lora| &lora.path == path)
-    });
-    ui.lora_add.set_sensitive(selected.is_some() && !active);
-}
-
-pub(crate) fn add_selected(ui: &Rc<Ui>) {
-    let Some(path) = current_choice(ui) else {
-        return;
-    };
-    if ui
-        .config
-        .borrow()
-        .loras
-        .iter()
-        .any(|lora| lora.path == path)
-    {
-        update_add_sensitivity(ui);
-        return;
-    }
-    if let Err(reason) = validate(&ui.lora_dir, &path) {
-        ui.toast
-            .add_toast(adw::Toast::new(&format!("Cannot add {path}: {reason}")));
-        refresh(ui);
-        return;
-    }
-    if set_lora(ui, &path, Some(1.0)) {
-        refresh(ui);
+fn apply_filter(rows: &Rc<RefCell<Vec<(gtk::Widget, String)>>>, text: &str) {
+    let needle = text.to_lowercase();
+    for (row, haystack) in rows.borrow().iter() {
+        if haystack.is_empty() {
+            row.set_visible(true);
+        } else {
+            row.set_visible(needle.is_empty() || haystack.contains(&needle));
+        }
     }
 }
 
@@ -242,21 +160,40 @@ pub(crate) fn build_page(ui: &Rc<Ui>) -> adw::PreferencesPage {
     folder_group.add(&folder_row);
     page.add(&folder_group);
 
-    let weights = adw::PreferencesGroup::builder()
-        .title("Weights")
+    let search = gtk::SearchEntry::builder()
+        .placeholder_text("Search LoRAs")
+        .build();
+    search.set_margin_top(6);
+    search.set_margin_bottom(6);
+    search.set_margin_start(6);
+    search.set_margin_end(6);
+    let search_group = adw::PreferencesGroup::new();
+    search_group.add(&search);
+    page.add(&search_group);
+
+    let installed = adw::PreferencesGroup::builder()
+        .title("Installed")
         .description(
-            "LoRAs are model-specific; use weights trained for the active model family. Add or remove active LoRAs from the sidebar; weights apply to the selected LoRAs.",
+            "Select one or more LoRAs. Weights apply to the active set; use weights trained for the active model family.",
         )
         .build();
-    page.add(&weights);
-    let rows: Rc<RefCell<Vec<gtk::Widget>>> = Rc::new(RefCell::new(Vec::new()));
-    populate_page(ui, &weights, &folder, &rows);
+    page.add(&installed);
+
+    let rows: Rc<RefCell<Vec<(gtk::Widget, String)>>> = Rc::new(RefCell::new(Vec::new()));
+    populate_page(ui, &installed, &folder, &rows, &search);
+    {
+        let rows = rows.clone();
+        search.connect_search_changed(move |search| apply_filter(&rows, &search.text()));
+    }
     {
         let ui = ui.clone();
-        let weights = weights.clone();
+        let installed = installed.clone();
         let folder = folder.clone();
         let rows = rows.clone();
-        rescan.connect_clicked(move |_| populate_page(&ui, &weights, &folder, &rows));
+        let search = search.clone();
+        rescan.connect_clicked(move |_| {
+            populate_page(&ui, &installed, &folder, &rows, &search);
+        });
     }
 
     page
@@ -266,9 +203,10 @@ fn populate_page(
     ui: &Rc<Ui>,
     group: &adw::PreferencesGroup,
     folder: &Path,
-    rows: &Rc<RefCell<Vec<gtk::Widget>>>,
+    rows: &Rc<RefCell<Vec<(gtk::Widget, String)>>>,
+    search: &gtk::SearchEntry,
 ) {
-    for row in rows.borrow_mut().drain(..) {
+    for (row, _) in rows.borrow_mut().drain(..) {
         group.remove(&row);
     }
 
@@ -282,7 +220,7 @@ fn populate_page(
             ))
             .build();
         group.add(&row);
-        rows.borrow_mut().push(row.upcast());
+        rows.borrow_mut().push((row.upcast(), String::new()));
         refresh(ui);
         return;
     }
@@ -291,11 +229,11 @@ fn populate_page(
     let mut disabled = Vec::new();
     for entry in entries {
         let selected = active.iter().find(|lora| lora.path == entry.path).cloned();
-        let mut is_active = selected.is_some() && entry.validation.is_ok();
+        let mut selected_now = selected.is_some() && entry.validation.is_ok();
         if selected.is_some() && entry.validation.is_err() {
             disabled.push(entry.file_name.clone());
             set_lora(ui, &entry.path, None);
-            is_active = false;
+            selected_now = false;
         }
         let weight_value = selected.map(|lora| lora.weight).unwrap_or(1.0);
         let subtitle = match &entry.validation {
@@ -305,6 +243,8 @@ fn populate_page(
         let row = adw::ActionRow::builder()
             .title(&entry.file_name)
             .subtitle(subtitle)
+            .title_lines(1)
+            .subtitle_lines(2)
             .build();
         if let Err(reason) = &entry.validation {
             let warning = gtk::Image::from_icon_name("dialog-warning-symbolic");
@@ -312,36 +252,68 @@ fn populate_page(
             row.add_prefix(&warning);
         }
 
+        let check = gtk::CheckButton::new();
+        check.set_active(selected_now);
+        check.set_sensitive(entry.validation.is_ok());
+        check.set_valign(gtk::Align::Center);
+        check.set_tooltip_text(Some(if entry.validation.is_ok() {
+            "Use this LoRA"
+        } else {
+            "This file cannot load"
+        }));
+        row.add_prefix(&check);
+        row.set_activatable_widget(Some(&check));
+
         let weight = gtk::SpinButton::with_range(0.0, 2.0, 0.05);
         weight.set_digits(2);
         weight.set_width_chars(5);
         weight.set_value(weight_value as f64);
-        weight.set_sensitive(is_active);
-        weight.set_tooltip_text(Some(if is_active {
+        weight.set_valign(gtk::Align::Center);
+        weight.set_sensitive(selected_now);
+        weight.set_tooltip_text(Some(if selected_now {
             "LoRA weight"
         } else {
-            "Add this LoRA from the sidebar to change its weight"
+            "Select this LoRA to change its weight"
         }));
+        row.add_suffix(&weight);
 
-        let status = gtk::Label::new(Some(if is_active { "Active" } else { "Not selected" }));
-        status.add_css_class("caption");
-        if !is_active {
-            status.add_css_class("dim-label");
-        }
-
-        let suffix = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        suffix.set_valign(gtk::Align::Center);
-        suffix.append(&weight);
-        suffix.append(&status);
-        row.add_suffix(&suffix);
         group.add(&row);
-        rows.borrow_mut().push(row.clone().upcast());
+        rows.borrow_mut().push((
+            row.clone().upcast(),
+            format!("{} {}", entry.file_name, entry.path).to_lowercase(),
+        ));
 
-        if is_active {
+        let guard = Rc::new(Cell::new(false));
+        {
             let ui = ui.clone();
             let path = entry.path.clone();
+            let weight = weight.clone();
+            let guard = guard.clone();
+            check.connect_toggled(move |check| {
+                if guard.get() {
+                    return;
+                }
+                let saved = if check.is_active() {
+                    set_lora(&ui, &path, Some(weight.value() as f32))
+                } else {
+                    set_lora(&ui, &path, None)
+                };
+                if saved {
+                    weight.set_sensitive(check.is_active());
+                    refresh(&ui);
+                } else {
+                    guard.set(true);
+                    check.set_active(!check.is_active());
+                    guard.set(false);
+                }
+            });
+        }
+        {
+            let ui = ui.clone();
+            let path = entry.path.clone();
+            let check = check.clone();
             weight.connect_value_changed(move |weight| {
-                if set_lora(&ui, &path, Some(weight.value() as f32)) {
+                if check.is_active() && set_lora(&ui, &path, Some(weight.value() as f32)) {
                     refresh(&ui);
                 }
             });
@@ -354,6 +326,7 @@ fn populate_page(
             disabled.join(", ")
         )));
     }
+    apply_filter(rows, &search.text());
     refresh(ui);
 }
 fn set_lora(ui: &Rc<Ui>, path: &str, weight: Option<f32>) -> bool {
