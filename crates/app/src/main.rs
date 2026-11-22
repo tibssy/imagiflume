@@ -447,8 +447,8 @@ fn install_styles() {
          }
          button.active-backend-icon,
          button.active-backend-icon:disabled {
-             color: @accent_color;
-             background-color: alpha(@accent_color, 0.14);
+             color: @view_fg_color;
+             background-color: alpha(@view_fg_color, 0.16);
              border-radius: 999px;
              opacity: 1;
          }
