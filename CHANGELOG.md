@@ -3,7 +3,7 @@
 All notable changes to Imagiflume. Alpha builds are test releases; expect
 rough edges.
 
-## Unreleased
+## 0.2.0-beta.1 — 2026-11-22
 
 - **Aspect ratio**: selecting an upscaled, adjusted or imported image now points
   the sidebar ratio at that image without changing the MP target. Previously the

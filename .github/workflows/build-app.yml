@@ -4,12 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (leave empty for v0.1.0-alpha.<run>)"
+        description: "Release tag (leave empty for v0.2.0-beta.<run>)"
         required: false
         default: ""
   push:
     tags:
       - "v*-alpha*"
+      - "v*-beta*"
       - "v*-test*"
 
 permissions:
@@ -74,7 +75,7 @@ jobs:
           elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
             tag="$GITHUB_REF_NAME"
           else
-            tag="v0.1.0-alpha.${GITHUB_RUN_NUMBER}"
+            tag="v0.2.0-beta.${GITHUB_RUN_NUMBER}"
           fi
           echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
           echo "Building release $tag"
@@ -96,11 +97,11 @@ jobs:
           ls -lh imagiflume-linux-x86_64.tar.gz ./*.sha256
           cat imagiflume-linux-x86_64.tar.gz.sha256
 
-      - name: Publish alpha release
+      - name: Publish beta release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: "Imagiflume ${{ env.RELEASE_TAG }} (alpha test)"
+          name: "Imagiflume ${{ env.RELEASE_TAG }} (beta)"
           prerelease: true
           fail_on_unmatched_files: true
           body: |
