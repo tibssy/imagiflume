@@ -12,10 +12,11 @@ rough edges.
   weights and folder controls. Changing the model clears active LoRAs because
   weights are model-specific.
 - **Batch**: replaced the number spinner with segmented 1–4 buttons.
-- **History**: thumbnails are cropped to a consistent 4:3 frame; every row,
-  including chain children, uses the same content height. Favorite, details and
-  delete sit in a top-right row; chain count pills hug their content at the
-  bottom right of grouped entries.
+- **History**: thumbnails render through a fixed 75×56 (4:3) cover-cropped
+  drawing area, and existing thumbnail caches are migrated to 4:3 on first
+  launch. Every row, including chain children, uses the same content height.
+  Favorite, details and delete sit in a top-right row; chain count pills hug
+  their content at the bottom right of grouped entries.
 - **New icon**: the cream "if" monogram is now the app icon, with the same
   mark on the About page.
 - **Renamed to Imagiflume**: the app ID is now

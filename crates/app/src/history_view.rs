@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use adw::prelude::*;
 use glib::types::StaticType;
+use gtk::cairo;
 use gtk::{gdk, glib};
 use imagiflume_core::preset::preset;
 use imagiflume_core::style::STYLES;
@@ -341,12 +342,14 @@ fn build_row_box(ui: &Rc<Ui>, entry: &Generation, depth: usize, group: RowGroup)
         .xalign(0.0)
         .ellipsize(gtk::pango::EllipsizeMode::End)
         .max_width_chars(18)
+        .lines(1)
         .build();
     let meta_label = gtk::Label::builder()
         .label(row_meta(entry, first_in_chain))
         .xalign(0.0)
         .ellipsize(gtk::pango::EllipsizeMode::End)
         .max_width_chars(22)
+        .lines(1)
         .css_classes(["caption", "dim-label"])
         .build();
     text.append(&prompt_label);
@@ -396,6 +399,7 @@ fn build_chain_header(
         .title(&entry.prompt)
         .subtitle(row_meta(entry, false))
         .title_lines(1)
+        .subtitle_lines(1)
         .expanded(!collapsed)
         .build();
     expander.set_widget_name(&entry.id.to_string());
@@ -499,7 +503,12 @@ fn build_chain_header(
     toggle.0.set_halign(gtk::Align::End);
     toggle.0.set_hexpand(false);
     toggle.0.set_valign(gtk::Align::End);
-    side.append(&toggle.0);
+    let pill = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    pill.set_halign(gtk::Align::End);
+    pill.set_hexpand(false);
+    pill.set_size_request(48, -1);
+    pill.append(&toggle.0);
+    side.append(&pill);
     ui.chain_toggles.borrow_mut().insert(root, toggle.clone());
     expander.add_suffix(&side);
     {
@@ -561,35 +570,59 @@ fn build_chain_header(
     expander
 }
 
-fn history_thumbnail(entry: &Generation, _depth: usize) -> gtk::AspectFrame {
-    let frame = gtk::AspectFrame::builder()
-        .ratio(4.0 / 3.0)
-        .obey_child(false)
-        .xalign(0.5)
-        .yalign(0.5)
-        .width_request(56)
-        .height_request(42)
+fn history_thumbnail(entry: &Generation, _depth: usize) -> gtk::DrawingArea {
+    let thumb = gtk::DrawingArea::builder()
+        .content_width(75)
+        .content_height(56)
         .build();
-    frame.set_halign(gtk::Align::Start);
-    frame.set_valign(gtk::Align::Center);
-    frame.set_overflow(gtk::Overflow::Hidden);
-    frame.add_css_class("card");
-    frame.add_css_class("history-thumb");
+    thumb.set_size_request(75, 56);
+    thumb.set_halign(gtk::Align::Start);
+    thumb.set_valign(gtk::Align::Center);
+    thumb.set_hexpand(false);
+    thumb.set_vexpand(false);
+    thumb.set_overflow(gtk::Overflow::Hidden);
+    thumb.add_css_class("card");
+    thumb.add_css_class("history-thumb");
 
-    let picture = gtk::Picture::builder()
-        .can_shrink(true)
-        .content_fit(gtk::ContentFit::Cover)
-        .hexpand(true)
-        .vexpand(true)
-        .build();
-    let thumb = thumb_path(entry.id);
-    if thumb.exists()
-        && let Ok(texture) = gdk::Texture::from_filename(&thumb)
-    {
-        picture.set_paintable(Some(&texture));
+    if let Ok(image) = image::open(thumb_path(entry.id)) {
+        let rgba = image.to_rgba8();
+        let (image_width, image_height) = rgba.dimensions();
+        if image_width > 0
+            && image_height > 0
+            && let Ok(stride) = cairo::Format::Rgb24.stride_for_width(image_width)
+        {
+            let mut data = rgba.into_raw();
+            for pixel in data.as_chunks_mut::<4>().0 {
+                pixel.swap(0, 2);
+            }
+            if let Ok(surface) = cairo::ImageSurface::create_for_data(
+                data,
+                cairo::Format::Rgb24,
+                image_width as i32,
+                image_height as i32,
+                stride,
+            ) {
+                thumb.set_draw_func(move |_, cr, width, height| {
+                    let scale = (width as f64 / image_width as f64)
+                        .max(height as f64 / image_height as f64);
+                    let draw_width = image_width as f64 * scale;
+                    let draw_height = image_height as f64 * scale;
+                    let x = (width as f64 - draw_width) / 2.0;
+                    let y = (height as f64 - draw_height) / 2.0;
+                    cr.save().ok();
+                    cr.rectangle(0.0, 0.0, width as f64, height as f64);
+                    cr.clip();
+                    cr.translate(x, y);
+                    cr.scale(scale, scale);
+                    let _ = cr.set_source_surface(&surface, 0.0, 0.0);
+                    cr.paint().ok();
+                    cr.restore().ok();
+                });
+            }
+        }
     }
-    frame.set_child(Some(&picture));
-    frame
+
+    thumb
 }
 
 fn favorite_button(ui: &Rc<Ui>, entry: &Generation, selecting: bool) -> gtk::Button {

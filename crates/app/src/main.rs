@@ -755,6 +755,7 @@ fn build_ui(app: &adw::Application) {
     refresh_model_list(&ui);
 
     if let Ok(entries) = ui.history.borrow().recent(HISTORY_LIMIT) {
+        upgrade_thumbnails();
         *ui.entries.borrow_mut() = entries;
         history_view::collapse_all_groups(&ui);
         history_view::rebuild(&ui);
@@ -5934,6 +5935,7 @@ pub(crate) fn history_filter_active(ui: &Ui) -> bool {
 /// `preserve_scroll` keeps the sidebar where the user left it, which is what
 /// background jobs and favorite toggles should do.
 pub(crate) fn reload_history(ui: &Rc<Ui>, preserve_scroll: bool) {
+    upgrade_thumbnails();
     let query = ui.history_search.text().to_string();
     let filter = crate::history::HistoryFilter::from_index(ui.history_filter.get());
     let filtered = !query.trim().is_empty() || filter != crate::history::HistoryFilter::All;
@@ -5969,9 +5971,45 @@ pub(crate) fn write_thumbnail(source: &Path, id: i64) -> anyhow::Result<()> {
     std::fs::create_dir_all(&dir)?;
     let image = image::open(source)?;
     image
-        .thumbnail(128, 128)
+        .resize_to_fill(128, 96, image::imageops::FilterType::Triangle)
         .save(dir.join(format!("{id}.png")))?;
     Ok(())
+}
+
+/// Crop old aspect-preserving thumbnails to the 4:3 cache format once.
+fn upgrade_thumbnails() {
+    let dir = paths::thumbs_dir();
+    let marker = dir.join(".4x3");
+    if marker.exists() {
+        return;
+    }
+    if let Err(error) = std::fs::create_dir_all(&dir) {
+        tracing::warn!(%error, path = %dir.display(), "failed to create the thumbnail folder");
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("png") {
+            continue;
+        }
+        let Ok((width, height)) = image::image_dimensions(&path) else {
+            continue;
+        };
+        if width == 0 || height == 0 || width as u64 * 3 == height as u64 * 4 {
+            continue;
+        }
+        let Ok(image) = image::open(&path) else {
+            continue;
+        };
+        let thumb = image.resize_to_fill(128, 96, image::imageops::FilterType::Triangle);
+        if let Err(error) = thumb.save(&path) {
+            tracing::warn!(%error, path = %path.display(), "failed to upgrade thumbnail");
+        }
+    }
+    let _ = std::fs::write(marker, b"4:3");
 }
 
 pub(crate) fn thumb_path(id: i64) -> PathBuf {
