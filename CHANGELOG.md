@@ -5,6 +5,9 @@ rough edges.
 
 ## Unreleased
 
+- **Aspect ratio**: selecting an upscaled, adjusted or imported image now points
+  the sidebar ratio at that image without changing the MP target. Previously the
+  ratio only updated after pressing **Edit** on the canvas.
 - **Diagnostics**: About now shows detected hardware and the backend log path,
   with an open-log button and a **Copy diagnostics** action that includes the
   version, channel, locale, GPU, backend, paths and log location.

@@ -851,6 +851,9 @@ fn inside_interactive(widget: &gtk::Widget) -> bool {
 /// prompts are loaded from the prompt picker.
 pub(crate) fn restore_settings(ui: &Rc<Ui>, entry: &Generation) {
     if matches!(entry.kind.as_str(), "upscale" | "adjust" | "import") {
+        // These entries have no meaningful model, style or seed to restore,
+        // but the sidebar ratio should still follow the selected image.
+        crate::set_ratio_for_image(ui, entry.width, entry.height);
         return;
     }
 

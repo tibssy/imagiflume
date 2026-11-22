@@ -1885,6 +1885,15 @@ pub(crate) fn set_size(ui: &Rc<Ui>, width: u32, height: u32) {
     set_target(ui, mp, (width, height));
 }
 
+/// Point the sidebar at the ratio of an image without changing the MP target.
+pub(crate) fn set_ratio_for_image(ui: &Rc<Ui>, width: u32, height: u32) {
+    if width == 0 || height == 0 {
+        return;
+    }
+    set_ratio_selection(ui, (width, height));
+    update_size_ui(ui);
+}
+
 /// Whether `(width, height)` is just the current target rounded to the grid.
 ///
 /// A coarse grid cannot reproduce every aspect exactly: 3:4 at 0.5 MP becomes
