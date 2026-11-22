@@ -376,6 +376,9 @@ fn install_styles() {
              background-color: alpha(@accent_bg_color, 0.45);
              border-radius: 1px;
          }
+         .history-thumb {
+             border-radius: 8px;
+         }
          .chain-toggle {
              background-color: alpha(@accent_bg_color, 0.18);
              color: @accent_color;

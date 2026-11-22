@@ -12,6 +12,9 @@ rough edges.
   weights and folder controls. Changing the model clears active LoRAs because
   weights are model-specific.
 - **Batch**: replaced the number spinner with segmented 1–4 buttons.
+- **History**: thumbnails are now cropped to a consistent 1:1 square; favorite,
+  details and delete sit in a top-right row, while chain count pills sit at the
+  bottom right of grouped entries.
 - **New icon**: the cream "if" monogram is now the app icon, with the same
   mark on the About page.
 - **Renamed to Imagiflume**: the app ID is now
