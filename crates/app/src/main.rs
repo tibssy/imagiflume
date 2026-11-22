@@ -445,11 +445,8 @@ fn install_styles() {
              padding: 2px 4px;
              border-radius: 12px;
          }
-         button.active-backend-icon,
-         button.active-backend-icon:disabled {
-             color: @view_fg_color;
-             background-color: alpha(@view_fg_color, 0.16);
-             border-radius: 999px;
+         button.active-backend-icon {
+             color: @accent_color;
              opacity: 1;
          }
          button.backend-check {
