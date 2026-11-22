@@ -379,9 +379,11 @@ fn install_styles() {
          .history-thumb {
              border-radius: 8px;
          }
-         .history-row {
-             margin-top: 3px;
-             margin-bottom: 3px;
+         row.history-row {
+             margin-top: 0;
+             margin-bottom: 0;
+             padding-top: 3px;
+             padding-bottom: 3px;
          }
          .chain-toggle {
              background-color: alpha(@accent_bg_color, 0.18);

@@ -16,8 +16,9 @@ rough edges.
   drawing area, and existing thumbnail caches are migrated to 4:3 on first
   launch. Every row, including chain children, uses the same content height.
   Favorite, details and delete sit in a top-right row; chain count pills hug
-  their content at the bottom right of grouped entries. History rows have a
-  few pixels of vertical spacing so the list reads as separate items.
+  their content at the bottom right of grouped entries. History rows are
+  separated by internal padding instead of gaps, so highlights and selection
+  stay continuous.
 - **New icon**: the cream "if" monogram is now the app icon, with the same
   mark on the About page.
 - **Renamed to Imagiflume**: the app ID is now
