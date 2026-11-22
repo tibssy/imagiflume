@@ -16,7 +16,7 @@ type RefreshSlot = Rc<RefCell<Option<Refresh>>>;
 
 /// Custom binaries link against host libraries that a Flatpak sandbox does
 /// not expose, so the chooser is only useful in native builds.
-fn in_flatpak() -> bool {
+pub(crate) fn in_flatpak() -> bool {
     std::env::var_os("FLATPAK_ID").is_some() || Path::new("/.flatpak-info").exists()
 }
 

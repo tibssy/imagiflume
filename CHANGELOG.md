@@ -5,6 +5,9 @@ rough edges.
 
 ## Unreleased
 
+- **Diagnostics**: About now shows detected hardware and the backend log path,
+  with an open-log button and a **Copy diagnostics** action that includes the
+  version, channel, locale, GPU, backend, paths and log location.
 - **History database**: the schema is now versioned, legacy files are backed up
   next to the database (`history.v0.bak`) before migration, migrations run in a
   transaction, and the database is integrity-checked on open. A corrupt or
