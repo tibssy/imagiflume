@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use adw::prelude::*;
 use glib::types::StaticType;
+use gtk::cairo;
 use gtk::{gdk, glib};
 use imagiflume_core::preset::preset;
 use imagiflume_core::style::STYLES;
@@ -213,6 +214,7 @@ fn rebuild_inner(ui: &Rc<Ui>, preserve_scroll: bool) {
             };
             debug_assert_eq!(*open_root, root);
             let row = gtk::ListBoxRow::new();
+            row.add_css_class("history-row");
             row.set_widget_name(&entry.id.to_string());
             row.set_child(Some(&build_row_box(ui, entry, depth, group)));
             expander.add_row(&row);
@@ -231,6 +233,7 @@ fn rebuild_inner(ui: &Rc<Ui>, preserve_scroll: bool) {
             chain = None;
             let row = gtk::ListBoxRow::new();
             // Row activation resolves entries by id, never by position.
+            row.add_css_class("history-row");
             row.set_widget_name(&entry.id.to_string());
             row.set_child(Some(&build_row_box(ui, entry, depth, group)));
             ui.history_list.append(&row);
@@ -296,15 +299,9 @@ fn build_row_box(ui: &Rc<Ui>, entry: &Generation, depth: usize, group: RowGroup)
     let first_in_chain = group.first_in_chain;
 
     let row_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    if depth > 0 {
-        // Tighter rows inside a chain so the group reads as one block.
-        row_box.set_margin_top(3);
-        row_box.set_margin_bottom(3);
-        row_box.add_css_class("chain-child");
-    } else {
-        row_box.set_margin_top(6);
-        row_box.set_margin_bottom(6);
-    }
+    row_box.set_margin_top(6);
+    row_box.set_margin_bottom(6);
+    row_box.set_height_request(56);
     row_box.set_margin_start(8 + depth as i32 * 8);
     row_box.set_margin_end(8);
 
@@ -343,33 +340,26 @@ fn build_row_box(ui: &Rc<Ui>, entry: &Generation, depth: usize, group: RowGroup)
         .xalign(0.0)
         .ellipsize(gtk::pango::EllipsizeMode::End)
         .max_width_chars(18)
+        .lines(1)
         .build();
     let meta_label = gtk::Label::builder()
         .label(row_meta(entry, first_in_chain))
         .xalign(0.0)
         .ellipsize(gtk::pango::EllipsizeMode::End)
         .max_width_chars(22)
+        .lines(1)
         .css_classes(["caption", "dim-label"])
         .build();
     text.append(&prompt_label);
     text.append(&meta_label);
 
-    let favorite_button = favorite_button(ui, entry, selecting);
-    let actions = actions_box(ui, entry, selecting);
+    let actions = history_actions(ui, entry, selecting);
 
     row_box.append(&thumbnail);
     row_box.append(&text);
-    row_box.append(&favorite_button);
     row_box.append(&actions);
 
     row_box.set_tooltip_text(Some(&row_tooltip(entry, group_size, first_in_chain)));
-
-    {
-        let ui = ui.clone();
-        let entry = entry.clone();
-        favorite_button.connect_clicked(move |_| toggle_favorite(&ui, &entry));
-    }
-    connect_row_actions(ui, entry, &actions);
 
     // Rows inside a chain are not direct list rows, so they handle clicks
     // themselves.
@@ -407,8 +397,10 @@ fn build_chain_header(
         .title(&entry.prompt)
         .subtitle(row_meta(entry, false))
         .title_lines(1)
+        .subtitle_lines(1)
         .expanded(!collapsed)
         .build();
+    expander.add_css_class("history-row");
     expander.set_widget_name(&entry.id.to_string());
     expander.set_tooltip_text(Some(&row_tooltip(entry, group_size, false)));
     // The expander's inner AdwActionRow toggles expansion whenever it is
@@ -417,6 +409,9 @@ fn build_chain_header(
     expander.set_activatable(false);
     if let Some(header) = expander_header_row(&expander) {
         header.set_activatable(false);
+        // Child rows are 56px of content plus 12px of vertical margins; match
+        // that here so the group header is as tall as the rows it contains.
+        header.set_height_request(68);
     }
 
     {
@@ -494,28 +489,35 @@ fn build_chain_header(
     if let Some(arrow) = crate::find_widget_by_css(expander.upcast_ref(), "expander-row-arrow") {
         arrow.set_visible(false);
     }
-    // Suffixes are prepended, so add in reverse visual order: the action column
-    // stays flush right like standalone rows, then the star, then the pill.
-    let actions = actions_box(ui, entry, selecting);
-    expander.add_suffix(&actions);
-    let favorite = favorite_button(ui, entry, selecting);
-    expander.add_suffix(&favorite);
+    // Actions sit at the top right; the count/arrow pill sits at the bottom
+    // right so grouped rows keep a consistent silhouette.
+    let side = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    side.set_valign(gtk::Align::Fill);
+    side.set_halign(gtk::Align::End);
+    side.set_hexpand(false);
+    side.set_margin_top(2);
+    side.set_margin_bottom(2);
+    let actions = history_actions(ui, entry, selecting);
+    actions.set_valign(gtk::Align::Start);
+    side.append(&actions);
     let toggle = chain_toggle_button(group_size, collapsed);
+    toggle.0.set_halign(gtk::Align::End);
+    toggle.0.set_hexpand(false);
+    toggle.0.set_valign(gtk::Align::End);
+    let pill = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    pill.set_halign(gtk::Align::End);
+    pill.set_hexpand(false);
+    pill.set_size_request(48, -1);
+    pill.append(&toggle.0);
+    side.append(&pill);
     ui.chain_toggles.borrow_mut().insert(root, toggle.clone());
-    expander.add_suffix(&toggle.0);
+    expander.add_suffix(&side);
     {
         let row = expander.clone();
         toggle
             .0
             .connect_clicked(move |_| row.set_expanded(!row.is_expanded()));
     }
-
-    {
-        let ui = ui.clone();
-        let entry = entry.clone();
-        favorite.connect_clicked(move |_| toggle_favorite(&ui, &entry));
-    }
-    connect_row_actions(ui, entry, &actions);
 
     ui.chain_headers.borrow_mut().insert(entry.id, root);
     ui.chain_expanders
@@ -569,21 +571,59 @@ fn build_chain_header(
     expander
 }
 
-fn history_thumbnail(entry: &Generation, depth: usize) -> gtk::Picture {
-    let thumbnail = gtk::Picture::builder()
-        .width_request(if depth > 0 { 44 } else { 56 })
-        .height_request(if depth > 0 { 44 } else { 56 })
-        .can_shrink(true)
-        .content_fit(gtk::ContentFit::Cover)
+fn history_thumbnail(entry: &Generation, _depth: usize) -> gtk::DrawingArea {
+    let thumb = gtk::DrawingArea::builder()
+        .content_width(75)
+        .content_height(56)
         .build();
-    thumbnail.add_css_class("card");
-    let thumb = thumb_path(entry.id);
-    if thumb.exists()
-        && let Ok(texture) = gdk::Texture::from_filename(&thumb)
-    {
-        thumbnail.set_paintable(Some(&texture));
+    thumb.set_size_request(75, 56);
+    thumb.set_halign(gtk::Align::Start);
+    thumb.set_valign(gtk::Align::Center);
+    thumb.set_hexpand(false);
+    thumb.set_vexpand(false);
+    thumb.set_overflow(gtk::Overflow::Hidden);
+    thumb.add_css_class("card");
+    thumb.add_css_class("history-thumb");
+
+    if let Ok(image) = image::open(thumb_path(entry.id)) {
+        let rgba = image.to_rgba8();
+        let (image_width, image_height) = rgba.dimensions();
+        if image_width > 0
+            && image_height > 0
+            && let Ok(stride) = cairo::Format::Rgb24.stride_for_width(image_width)
+        {
+            let mut data = rgba.into_raw();
+            for pixel in data.as_chunks_mut::<4>().0 {
+                pixel.swap(0, 2);
+            }
+            if let Ok(surface) = cairo::ImageSurface::create_for_data(
+                data,
+                cairo::Format::Rgb24,
+                image_width as i32,
+                image_height as i32,
+                stride,
+            ) {
+                thumb.set_draw_func(move |_, cr, width, height| {
+                    let scale = (width as f64 / image_width as f64)
+                        .max(height as f64 / image_height as f64);
+                    let draw_width = image_width as f64 * scale;
+                    let draw_height = image_height as f64 * scale;
+                    let x = (width as f64 - draw_width) / 2.0;
+                    let y = (height as f64 - draw_height) / 2.0;
+                    cr.save().ok();
+                    cr.rectangle(0.0, 0.0, width as f64, height as f64);
+                    cr.clip();
+                    cr.translate(x, y);
+                    cr.scale(scale, scale);
+                    let _ = cr.set_source_surface(&surface, 0.0, 0.0);
+                    cr.paint().ok();
+                    cr.restore().ok();
+                });
+            }
+        }
     }
-    thumbnail
+
+    thumb
 }
 
 fn favorite_button(ui: &Rc<Ui>, entry: &Generation, selecting: bool) -> gtk::Button {
@@ -608,50 +648,55 @@ fn favorite_button(ui: &Rc<Ui>, entry: &Generation, selecting: bool) -> gtk::But
     button
 }
 
-fn actions_box(ui: &Rc<Ui>, entry: &Generation, selecting: bool) -> gtk::Box {
-    let actions = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    actions.set_valign(gtk::Align::Center);
+fn history_actions(ui: &Rc<Ui>, entry: &Generation, selecting: bool) -> gtk::Box {
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+    actions.set_valign(gtk::Align::Start);
+    actions.set_halign(gtk::Align::End);
     actions.set_visible(!selecting);
-    let info_button = gtk::Button::builder()
+
+    let favorite = favorite_button(ui, entry, selecting);
+    let info = gtk::Button::builder()
         .icon_name("dialog-information-symbolic")
         .tooltip_text("Details")
-        .css_classes(["flat"])
+        .width_request(26)
+        .height_request(26)
+        .valign(gtk::Align::Center)
+        .css_classes(["flat", "circular"])
         .build();
-    let delete_button = gtk::Button::builder()
+    let delete = gtk::Button::builder()
         .icon_name("user-trash-symbolic")
         .tooltip_text("Delete image")
-        .css_classes(["flat"])
+        .width_request(26)
+        .height_request(26)
+        .valign(gtk::Align::Center)
+        .css_classes(["flat", "circular"])
         .build();
     if crate::history_entry_locked(ui, Path::new(&entry.image_path)) {
-        delete_button.set_visible(false);
-        delete_button.set_tooltip_text(Some("Used by a queued job"));
+        delete.set_visible(false);
+        delete.set_tooltip_text(Some("Used by a queued job"));
     }
-    actions.append(&info_button);
-    actions.append(&delete_button);
-    actions
-}
 
-/// Wire the info and delete buttons inside a row's action column.
-fn connect_row_actions(ui: &Rc<Ui>, entry: &Generation, actions: &gtk::Box) {
-    let mut child = actions.first_child();
-    let mut index = 0;
-    while let Some(widget) = child {
-        child = widget.next_sibling();
-        let Ok(button) = widget.downcast::<gtk::Button>() else {
-            continue;
-        };
+    actions.append(&favorite);
+    actions.append(&info);
+    actions.append(&delete);
+
+    {
         let ui = ui.clone();
         let entry = entry.clone();
-        match index {
-            0 => {
-                button.connect_clicked(move |_| show_info(&ui, &entry));
-            }
-            _ => {
-                button.connect_clicked(move |_| confirm_delete(&ui, &entry));
-            }
-        }
-        index += 1;
+        favorite.connect_clicked(move |_| toggle_favorite(&ui, &entry));
     }
+    {
+        let ui = ui.clone();
+        let entry = entry.clone();
+        info.connect_clicked(move |_| show_info(&ui, &entry));
+    }
+    {
+        let ui = ui.clone();
+        let entry = entry.clone();
+        delete.connect_clicked(move |_| confirm_delete(&ui, &entry));
+    }
+
+    actions
 }
 
 fn row_meta(entry: &Generation, first_in_chain: bool) -> String {

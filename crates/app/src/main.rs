@@ -229,7 +229,6 @@ pub(crate) struct Ui {
     pub random_button: gtk::Button,
     pub batch_spin: gtk::SpinButton,
     pub lora_button: gtk::Button,
-    pub lora_summary: gtk::Label,
     /// Resolved folder scanned for LoRA weights.
     pub lora_dir: PathBuf,
     /// Server log position before the running job, used to catch LoRAs the
@@ -377,6 +376,48 @@ fn install_styles() {
              background-color: alpha(@accent_bg_color, 0.45);
              border-radius: 1px;
          }
+         .history-thumb {
+             border-radius: 8px;
+         }
+         row.history-row {
+             margin-top: 0;
+             margin-bottom: 0;
+             padding-top: 3px;
+             padding-bottom: 3px;
+         }
+         /* An expander row wraps its header and the whole chain, so a row
+            background would paint the entire block. Highlight the header or
+            child row instead, and drop the nested list shade. */
+         row.expander.history-row,
+         row.expander.history-row:hover,
+         row.expander.history-row:selected {
+             background: none;
+         }
+         row.expander.history-row list.nested {
+             background: none;
+         }
+         row.expander.history-row list.nested > row {
+             border-bottom: none;
+         }
+         /* Tint an expanded chain so the group reads as one block. The tint
+            must survive hover and selection, which is why it comes last. */
+         row.expander.history-row:checked,
+         row.expander.history-row:checked:hover,
+         row.expander.history-row:checked:selected {
+             background-color: alpha(@accent_bg_color, 0.1);
+             border-radius: 12px;
+         }
+         row.expander.history-row > box > list > row.header:hover {
+             background-color: alpha(@view_fg_color, 0.07);
+             border-radius: 9px;
+         }
+         row.expander.history-row:selected > box > list > row.header {
+             background-color: alpha(@view_fg_color, 0.1);
+             border-radius: 9px;
+         }
+         row.expander.history-row list.nested > row:hover {
+             background-color: alpha(@view_fg_color, 0.07);
+         }
          .chain-toggle {
              background-color: alpha(@accent_bg_color, 0.18);
              color: @accent_color;
@@ -388,13 +429,33 @@ fn install_styles() {
          .chain-toggle:hover {
              background-color: alpha(@accent_bg_color, 0.3);
          }
-         .chain-child:hover {
-             background-color: alpha(@window_fg_color, 0.06);
+         .lora-button-active {
+             color: @accent_color;
+             background-color: alpha(@accent_bg_color, 0.16);
              border-radius: 8px;
+         }
+         .batch-choice {
+             min-width: 32px;
+             min-height: 30px;
+             padding: 0;
+             border: none;
+             border-radius: 8px;
+             background-image: none;
+             background-color: alpha(@view_fg_color, 0.08);
+             box-shadow: none;
+             font-weight: bold;
+         }
+         .batch-choice:hover {
+             background-color: alpha(@view_fg_color, 0.14);
+         }
+         .batch-choice:checked {
+             background-color: alpha(@accent_bg_color, 0.28);
+             color: @accent_color;
+             box-shadow: inset 0 0 0 2px @accent_color;
          }
          .history-child-selected {
              background-color: alpha(@accent_bg_color, 0.28);
-             border-radius: 8px;
+             border-radius: 9px;
          }
          .sidebar-pane, .overlay-pane {
              background-color: @sidebar_bg_color;
@@ -414,18 +475,6 @@ fn install_styles() {
          .zoom-controls {
              padding: 2px 4px;
              border-radius: 12px;
-         }
-         button.active-backend-icon,
-         button.active-backend-icon:disabled {
-             color: @accent_bg_color;
-             opacity: 1;
-         }
-         button.backend-check {
-             color: @view_fg_color;
-             opacity: 1;
-         }
-         button.backend-check:hover {
-             color: @accent_bg_color;
          }",
     );
     gtk::style_context_add_provider_for_display(
@@ -440,6 +489,14 @@ fn build_ui(app: &adw::Application) {
 
     let mut config = Config::load();
     backends::sanitize_config(&mut config);
+    // LoRAs are model-specific and session-only: a restart must not restore
+    // whatever was enabled in the previous session.
+    if !config.loras.is_empty() {
+        config.loras.clear();
+        if let Err(error) = config.save() {
+            tracing::warn!(%error, "failed to save the cleared LoRA selection");
+        }
+    }
     let models_dir = resolve_models_dir(&config);
     let sd_server = resolve_sd_server(&config);
     let needs_backend = config.sd_server.is_none()
@@ -505,8 +562,8 @@ fn build_ui(app: &adw::Application) {
     let split = adw::OverlaySplitView::builder()
         .sidebar(&side.root)
         .content(&content_view)
-        .min_sidebar_width(340.0)
-        .max_sidebar_width(420.0)
+        .min_sidebar_width(360.0)
+        .max_sidebar_width(440.0)
         .show_sidebar(config.sidebar_visible)
         .build();
 
@@ -668,7 +725,6 @@ fn build_ui(app: &adw::Application) {
         random_button: side.random_button,
         batch_spin: side.batch_spin,
         lora_button: side.lora_button,
-        lora_summary: side.lora_summary,
         lora_dir,
         lora_log_offset: Cell::new(None),
         state: RefCell::new(AppState::default()),
@@ -694,7 +750,7 @@ fn build_ui(app: &adw::Application) {
     install_image_drag(&ui);
     effects::rebuild_menu(&ui);
     effects::install_tools(&ui);
-    lora::update_summary(&ui);
+    lora::refresh(&ui);
     setup_crop_overlay(&ui);
     setup_zoom_overlay(&ui);
     setup_compare_overlay(&ui);
@@ -730,6 +786,7 @@ fn build_ui(app: &adw::Application) {
     refresh_model_list(&ui);
 
     if let Ok(entries) = ui.history.borrow().recent(HISTORY_LIMIT) {
+        upgrade_thumbnails();
         *ui.entries.borrow_mut() = entries;
         history_view::collapse_all_groups(&ui);
         history_view::rebuild(&ui);
@@ -992,10 +1049,18 @@ fn wire_events(ui: &Rc<Ui>, preferences_button: &gtk::Button) {
                 return;
             };
             dropdown.set_tooltip_text(Some(model.description));
-            {
+            let cleared_loras = {
                 let mut config = ui.config.borrow_mut();
                 config.active_preset = model.id.to_string();
+                let cleared = !config.loras.is_empty();
+                config.loras.clear();
                 let _ = config.save();
+                cleared
+            };
+            if cleared_loras {
+                ui.toast
+                    .add_toast(adw::Toast::new("LoRAs cleared for the new model."));
+                lora::refresh(&ui);
             }
             // Free the previous model right away instead of waiting for the
             // idle timeout.
@@ -1620,12 +1685,15 @@ pub(crate) fn active_preset(ui: &Rc<Ui>) -> &'static ModelPreset {
 
 pub(crate) fn refresh_model(ui: &Rc<Ui>) {
     let prompt_helper = prompt_ai::find_cli(&ui.config.borrow());
+    ui.model_hint.set_visible(false);
+    ui.model_hint.remove_css_class("error");
     if ui.models.borrow().is_empty() {
         ui.model_dropdown
             .set_tooltip_text(Some("No models installed"));
         ui.model_hint
             .set_text("No models installed — download in Preferences");
         ui.model_hint.add_css_class("error");
+        ui.model_hint.set_visible(true);
         ui.generate.set_sensitive(false);
         ui.reference_button.set_visible(false);
         render_reference_strip(ui);
@@ -1645,12 +1713,7 @@ pub(crate) fn refresh_model(ui: &Rc<Ui>) {
     render_reference_strip(ui);
 
     if missing.is_empty() {
-        ui.model_hint.set_text(&format!(
-            "{} · {:.1} GB · installed",
-            model.label,
-            model.total_bytes() as f64 / 1e9
-        ));
-        ui.model_hint.remove_css_class("error");
+        ui.model_hint.set_text("");
         ui.generate.set_sensitive(true);
     } else {
         let names: Vec<&str> = missing.iter().map(|file| file.rel_path).collect();
@@ -1659,6 +1722,7 @@ pub(crate) fn refresh_model(ui: &Rc<Ui>) {
             names.join(", ")
         ));
         ui.model_hint.add_css_class("error");
+        ui.model_hint.set_visible(true);
         ui.generate.set_sensitive(false);
     }
 
@@ -5902,6 +5966,7 @@ pub(crate) fn history_filter_active(ui: &Ui) -> bool {
 /// `preserve_scroll` keeps the sidebar where the user left it, which is what
 /// background jobs and favorite toggles should do.
 pub(crate) fn reload_history(ui: &Rc<Ui>, preserve_scroll: bool) {
+    upgrade_thumbnails();
     let query = ui.history_search.text().to_string();
     let filter = crate::history::HistoryFilter::from_index(ui.history_filter.get());
     let filtered = !query.trim().is_empty() || filter != crate::history::HistoryFilter::All;
@@ -5937,9 +6002,45 @@ pub(crate) fn write_thumbnail(source: &Path, id: i64) -> anyhow::Result<()> {
     std::fs::create_dir_all(&dir)?;
     let image = image::open(source)?;
     image
-        .thumbnail(128, 128)
+        .resize_to_fill(128, 96, image::imageops::FilterType::Triangle)
         .save(dir.join(format!("{id}.png")))?;
     Ok(())
+}
+
+/// Crop old aspect-preserving thumbnails to the 4:3 cache format once.
+fn upgrade_thumbnails() {
+    let dir = paths::thumbs_dir();
+    let marker = dir.join(".4x3");
+    if marker.exists() {
+        return;
+    }
+    if let Err(error) = std::fs::create_dir_all(&dir) {
+        tracing::warn!(%error, path = %dir.display(), "failed to create the thumbnail folder");
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("png") {
+            continue;
+        }
+        let Ok((width, height)) = image::image_dimensions(&path) else {
+            continue;
+        };
+        if width == 0 || height == 0 || width as u64 * 3 == height as u64 * 4 {
+            continue;
+        }
+        let Ok(image) = image::open(&path) else {
+            continue;
+        };
+        let thumb = image.resize_to_fill(128, 96, image::imageops::FilterType::Triangle);
+        if let Err(error) = thumb.save(&path) {
+            tracing::warn!(%error, path = %path.display(), "failed to upgrade thumbnail");
+        }
+    }
+    let _ = std::fs::write(marker, b"4:3");
 }
 
 pub(crate) fn thumb_path(id: i64) -> PathBuf {

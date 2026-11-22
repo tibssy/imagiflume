@@ -140,6 +140,10 @@ fn upscaler_status(preset: &UpscalerPreset, models_dir: &Path) -> String {
 }
 
 pub(crate) fn show_preferences(ui: &Rc<Ui>, focus_models: bool) {
+    show_preferences_inner(ui, focus_models);
+}
+
+fn show_preferences_inner(ui: &Rc<Ui>, focus_models: bool) {
     let dialog = adw::PreferencesDialog::builder()
         .title("Preferences")
         .search_enabled(false)

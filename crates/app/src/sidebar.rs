@@ -24,7 +24,6 @@ pub(crate) struct Sidebar {
     pub random_button: gtk::Button,
     pub batch_spin: gtk::SpinButton,
     pub lora_button: gtk::Button,
-    pub lora_summary: gtk::Label,
     pub new_button: gtk::Button,
     pub open_button: gtk::Button,
     pub select_button: gtk::Button,
@@ -72,7 +71,8 @@ pub(crate) fn build(
     model_dropdown.set_tooltip_text(Some("Installed models"));
 
     let model_hint = gtk::Label::builder()
-        .label("Looking for installed models…")
+        .label("")
+        .visible(false)
         .xalign(0.0)
         .wrap(true)
         .max_width_chars(34)
@@ -220,39 +220,68 @@ pub(crate) fn build(
     seed_row.append(&random_button);
 
     let batch_spin = gtk::SpinButton::with_range(1.0, 4.0, 1.0);
-    batch_spin.set_value(config.batch_count.clamp(1, 4) as f64);
-    batch_spin.set_width_chars(2);
-    batch_spin.set_valign(gtk::Align::Center);
+    let batch_count = config.batch_count.clamp(1, 4);
+    batch_spin.set_value(batch_count as f64);
     batch_spin.set_tooltip_text(Some("Images to queue per Generate"));
+    let batch_choices = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    batch_choices.set_hexpand(true);
+    batch_choices.set_homogeneous(true);
+    let batch_buttons: Rc<Vec<gtk::ToggleButton>> = Rc::new(
+        (1u32..=4)
+            .map(|count| {
+                gtk::ToggleButton::builder()
+                    .label(count.to_string())
+                    .active(count == batch_count)
+                    .tooltip_text(format!(
+                        "Queue {count} image{} per Generate",
+                        if count == 1 { "" } else { "s" }
+                    ))
+                    .css_classes(["batch-choice"])
+                    .build()
+            })
+            .collect(),
+    );
+    for (index, button) in batch_buttons.iter().enumerate() {
+        let batch_buttons = batch_buttons.clone();
+        let batch_spin = batch_spin.clone();
+        let count = index as u32 + 1;
+        button.connect_toggled(move |button| {
+            if !button.is_active() {
+                if !batch_buttons.iter().any(|other| other.is_active()) {
+                    button.set_active(true);
+                }
+                return;
+            }
+            for (other_index, other) in batch_buttons.iter().enumerate() {
+                if other_index as u32 + 1 != count {
+                    other.set_active(false);
+                }
+            }
+            batch_spin.set_value(count as f64);
+        });
+    }
+    for button in batch_buttons.iter() {
+        batch_choices.append(button);
+    }
     let batch_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     batch_row.append(&field_label("Batch"));
-    batch_row.append(&batch_spin);
-    let batch_hint = gtk::Label::builder()
-        .label("images")
-        .xalign(0.0)
-        .hexpand(true)
-        .css_classes(["caption", "dim-label"])
-        .build();
-    batch_row.append(&batch_hint);
+    batch_row.append(&batch_choices);
 
+    let lora_icon = gtk::Image::from_icon_name("application-x-addon-symbolic");
+    lora_icon.set_pixel_size(16);
     let lora_button = gtk::Button::builder()
-        .label("LoRAs…")
-        .tooltip_text("Apply LoRA weights to generations")
-        .css_classes(["flat"])
+        .tooltip_text("Manage LoRAs")
+        .valign(gtk::Align::Center)
+        .css_classes(["flat", "lora-button"])
+        .child(&lora_icon)
         .build();
-    let lora_summary = gtk::Label::builder()
-        .label("None active")
-        .xalign(0.0)
-        .hexpand(true)
-        .css_classes(["caption", "dim-label"])
-        .build();
-    let lora_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    lora_row.append(&field_label("LoRAs"));
-    lora_row.append(&lora_button);
-    lora_row.append(&lora_summary);
+    let model_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    model_row.set_hexpand(true);
+    model_row.append(&model_dropdown);
+    model_row.append(&lora_button);
 
-    let setup = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    setup.append(&row("Model", &model_dropdown));
+    let setup = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    setup.append(&row("Model", &model_row));
     setup.append(&model_hint);
     setup.append(&row("Style", &style_dropdown));
 
@@ -265,7 +294,6 @@ pub(crate) fn build(
     ratio_select_row.append(&ratio_dropdown);
     setup.append(&seed_row);
     setup.append(&batch_row);
-    setup.append(&lora_row);
     setup.append(&ratio_select_row);
     setup.append(&size_row);
     setup.append(&ratio_preview);
@@ -500,7 +528,6 @@ pub(crate) fn build(
         random_button,
         batch_spin,
         lora_button,
-        lora_summary,
         new_button,
         open_button,
         select_button,

@@ -533,6 +533,7 @@ fn rebuild(
     while let Some(child) = list.first_child() {
         list.remove(&child);
     }
+    let mut radios: Vec<gtk::CheckButton> = Vec::new();
 
     let root = section.root();
     let system_path = section.system_path();
@@ -579,16 +580,19 @@ fn rebuild(
             .subtitle(subtitle)
             .tooltip_text(section.system_tooltip())
             .build();
-        let check = check_button(active, section.use_system_tooltip());
+        let check = radio_button(active, section.use_system_tooltip());
         if !active {
             let ui = ui.clone();
             let refresh = refresh.clone();
             let path = path.clone();
-            check.connect_clicked(move |_| {
-                section.set_active(&ui, path.clone(), None, None);
-                refresh();
+            check.connect_toggled(move |button| {
+                if button.is_active() {
+                    section.set_active(&ui, path.clone(), None, None);
+                    refresh();
+                }
             });
         }
+        radios.push(check.clone());
         row.add_suffix(&check_slot(Some(check.upcast::<gtk::Widget>())));
         list.append(&row);
     }
@@ -671,7 +675,7 @@ fn rebuild(
             row.set_tooltip_text(Some(notes));
         }
 
-        let mut buttons = Vec::new();
+        let mut buttons: Vec<gtk::Widget> = Vec::new();
         let delete = gtk::Button::builder()
             .icon_name("user-trash-symbolic")
             .tooltip_text("Remove this backend")
@@ -696,7 +700,7 @@ fn rebuild(
             .css_classes(["flat"])
             .visible(previous_available)
             .build();
-        let check = check_button(active, "Use this backend");
+        let check = radio_button(active, "Use this backend");
         let update = gtk::Button::builder()
             .icon_name("software-update-available-symbolic")
             .tooltip_text(format!("Update to {}", short_version(&entry.version)))
@@ -711,17 +715,18 @@ fn rebuild(
             .css_classes(["flat"])
             .visible(!installed && available && compatibility.is_none())
             .build();
-        buttons.push(download.clone());
-        buttons.push(update.clone());
-        buttons.push(rollback.clone());
-        buttons.push(check.clone());
-        buttons.push(delete.clone());
+        buttons.push(download.clone().upcast::<gtk::Widget>());
+        buttons.push(update.clone().upcast::<gtk::Widget>());
+        buttons.push(rollback.clone().upcast::<gtk::Widget>());
+        buttons.push(check.clone().upcast::<gtk::Widget>());
+        buttons.push(delete.clone().upcast::<gtk::Widget>());
         row.add_suffix(&delete);
         row.add_suffix(&download);
         row.add_suffix(&rollback);
         row.add_suffix(&update);
         if installed {
             if active || compatibility.is_none() {
+                radios.push(check.clone());
                 row.add_suffix(&check_slot(Some(check.clone().upcast::<gtk::Widget>())));
             } else {
                 row.add_suffix(&check_slot(None));
@@ -733,9 +738,11 @@ fn rebuild(
             let ui = ui.clone();
             let entry = entry.clone();
             let refresh = refresh.clone();
-            check.connect_clicked(move |_| {
-                activate_entry(&ui, section, &entry);
-                refresh();
+            check.connect_toggled(move |button| {
+                if button.is_active() {
+                    activate_entry(&ui, section, &entry);
+                    refresh();
+                }
             });
         }
         {
@@ -805,12 +812,15 @@ fn rebuild(
             });
         }
         let check = match custom {
-            Some(_) if custom_active => Some(check_button(true, "Active custom backend")),
+            Some(_) if custom_active => Some(radio_button(true, "Active custom backend")),
             Some(path) if path.is_file() => {
-                let button = check_button(false, "Use this custom backend");
+                let button = radio_button(false, "Use this custom backend");
                 let ui = ui.clone();
                 let refresh = refresh.clone();
-                button.connect_clicked(move |_| {
+                button.connect_toggled(move |button| {
+                    if !button.is_active() {
+                        return;
+                    }
                     {
                         let mut config = ui.config.borrow_mut();
                         section.set_custom(&mut config, Some(path.clone()));
@@ -822,13 +832,14 @@ fn rebuild(
                 Some(button)
             }
             Some(_) => {
-                let button = check_button(false, "Custom backend is missing");
+                let button = radio_button(false, "Custom backend is missing");
                 button.set_sensitive(false);
                 Some(button)
             }
             None => None,
         };
         if let Some(button) = check {
+            radios.push(button.clone());
             custom_row.add_suffix(&choose);
             custom_row.add_suffix(&check_slot(Some(button.upcast::<gtk::Widget>())));
         } else {
@@ -838,6 +849,23 @@ fn rebuild(
         }
         list.append(&custom_row);
     }
+
+    // Group every visible indicator so the section behaves like a radio group.
+    if let Some((first, rest)) = radios.split_first() {
+        if rest.is_empty() {
+            // A lone indicator has no group to keep it checked on click.
+            let only = first.clone();
+            only.connect_toggled(move |button| {
+                if !button.is_active() {
+                    button.set_active(true);
+                }
+            });
+        } else {
+            for radio in rest {
+                radio.set_group(Some(first));
+            }
+        }
+    }
 }
 
 fn start_install(
@@ -846,7 +874,7 @@ fn start_install(
     entry: &BackendEntry,
     row: &adw::ActionRow,
     refresh: Rc<dyn Fn()>,
-    buttons: Vec<gtk::Button>,
+    buttons: Vec<gtk::Widget>,
     auto_activate: bool,
 ) {
     if ui.backend_installing.get() {
@@ -1103,18 +1131,14 @@ fn check_slot(content: Option<gtk::Widget>) -> gtk::Box {
     slot
 }
 
-fn check_button(active: bool, tooltip: &str) -> gtk::Button {
-    let button = gtk::Button::builder()
-        .icon_name("object-select-symbolic")
+fn radio_button(active: bool, tooltip: &str) -> gtk::CheckButton {
+    gtk::CheckButton::builder()
+        .active(active)
         .tooltip_text(tooltip)
+        .halign(gtk::Align::Center)
         .valign(gtk::Align::Center)
-        .css_classes(["flat", "backend-check"])
-        .build();
-    if active {
-        button.add_css_class("active-backend-icon");
-        button.set_sensitive(false);
-    }
-    button
+        .css_classes(["backend-check"])
+        .build()
 }
 
 fn previous_dir(entry: &BackendEntry, root: &std::path::Path) -> PathBuf {

@@ -5,6 +5,23 @@ rough edges.
 
 ## Unreleased
 
+- **Sidebar setup**: removed the installed-model caption, increased the spacing
+  between controls, and put the model dropdown and LoRA button on one row. The
+  button uses the accent colour when any LoRA is active.
+- **LoRAs**: the icon opens a dedicated LoRA dialog with search, checkboxes,
+  weights and folder controls. Active LoRAs are session-only: they are cleared
+  on model change and never restored on launch.
+- **Batch**: replaced the number spinner with segmented 1–4 buttons.
+- **History**: thumbnails render through a fixed 75×56 (4:3) cover-cropped
+  drawing area, and existing thumbnail caches are migrated to 4:3 on first
+  launch. Every row, including chain children, uses the same content height.
+  Favorite, details and delete sit in a top-right row; chain count pills hug
+  their content at the bottom right of grouped entries. History rows are
+  separated by internal padding instead of gaps, so highlights and selection
+  stay continuous. Grouped chains are flattened and expanded groups get a
+  subtle accent tint so the chain reads as one block, without a separate
+  separator line under the last child. Group headers are the same height as
+  the rows they contain.
 - **New icon**: the cream "if" monogram is now the app icon, with the same
   mark on the About page.
 - **Renamed to Imagiflume**: the app ID is now
