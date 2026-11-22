@@ -63,7 +63,7 @@ impl Spinner {
                 slot.borrow_mut().take();
                 return glib::ControlFlow::Break;
             }
-            angle.set((clock.frame_time() as f64 / 1_000_000_000.0) * TAU);
+            angle.set((clock.frame_time() as f64 / 1_000_000.0) * TAU);
             area.queue_draw();
             glib::ControlFlow::Continue
         }));
@@ -94,6 +94,58 @@ fn draw(cr: &cairo::Context, color: gtk::gdk::RGBA, width: i32, height: i32, ang
     cr.set_line_width((side / 8.0).clamp(1.5, 2.5));
     cr.set_line_cap(cairo::LineCap::Round);
     cr.set_source_rgba(red, green, blue, 0.9);
+    cr.new_path();
     cr.arc(center_x, center_y, radius, angle, angle + 4.4);
     cr.stroke().ok();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    #[ignore = "opens a window on the developer's display"]
+    fn animates_and_survives_remap() {
+        gtk::init().unwrap();
+        let window = gtk::Window::new();
+        window.set_default_size(60, 60);
+        let spinner = Spinner::new(16);
+        window.set_child(Some(&spinner.widget));
+        spinner.start();
+        window.present();
+
+        let context = glib::MainContext::default();
+        let pump = |millis: u64| {
+            let deadline = Instant::now() + Duration::from_millis(millis);
+            while Instant::now() < deadline {
+                context.iteration(false);
+            }
+        };
+
+        pump(400);
+        let first = spinner.angle.get();
+        pump(300);
+        let second = spinner.angle.get();
+        assert!(
+            second - first > 1.0,
+            "spinner advanced too slowly: {} -> {}",
+            first,
+            second
+        );
+
+        spinner.widget.set_visible(false);
+        pump(200);
+        spinner.widget.set_visible(true);
+        pump(400);
+        let third = spinner.angle.get();
+        pump(300);
+        let fourth = spinner.angle.get();
+        assert!(
+            fourth - third > 1.0,
+            "spinner froze after remap: {} -> {}",
+            third,
+            fourth
+        );
+    }
 }
