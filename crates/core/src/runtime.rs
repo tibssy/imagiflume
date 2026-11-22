@@ -331,6 +331,8 @@ impl HardwareProfile {
             BackendKind::Vulkan => {
                 if self.vulkan {
                     None
+                } else if has_library("libvulkan.so.1") {
+                    Some("No Vulkan driver (ICD) installed".into())
                 } else {
                     Some("Vulkan loader (libvulkan.so.1) not found".into())
                 }
