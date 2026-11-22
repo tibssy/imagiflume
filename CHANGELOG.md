@@ -18,8 +18,8 @@ rough edges.
   Favorite, details and delete sit in a top-right row; chain count pills hug
   their content at the bottom right of grouped entries. History rows are
   separated by internal padding instead of gaps, so highlights and selection
-  stay continuous. Grouped chains are flattened: the expander no longer paints
-  a container shade or an inset hover rectangle behind its children.
+  stay continuous. Grouped chains are flattened and expanded groups get a
+  subtle accent tint so the chain reads as one block.
 - **New icon**: the cream "if" monogram is now the app icon, with the same
   mark on the About page.
 - **Renamed to Imagiflume**: the app ID is now
