@@ -393,7 +393,27 @@ impl Inner {
         if restart {
             self.stop();
             let _ = progress.send_blocking(Progress::Loading);
-            self.start(model, offload)?;
+            if let Err(error) = self.start(model, offload) {
+                // A hand-picked Vulkan/CUDA backend can be unavailable even
+                // when the loader and libraries exist (for example in a VM).
+                // Keep the session usable by retrying with auto-selection.
+                if self
+                    .config
+                    .backend
+                    .as_deref()
+                    .is_some_and(|backend| backend != "cpu")
+                {
+                    tracing::warn!(%error, "selected backend failed; retrying automatically");
+                    let _ = progress.send_blocking(Progress::Warning(format!(
+                        "The selected backend could not start ({error}). Retrying with automatic device selection."
+                    )));
+                    self.stop();
+                    self.config.backend = None;
+                    self.start(model, offload)?;
+                } else {
+                    return Err(error);
+                }
+            }
         }
         self.last_used = Instant::now();
         Ok(())

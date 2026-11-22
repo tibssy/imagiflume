@@ -26,6 +26,8 @@ pub(crate) struct MainView {
     pub queue_bubble_label: gtk::Label,
     pub cancel: gtk::Button,
     pub status: gtk::Label,
+    /// Currently selected inference backends, shown at the bottom right.
+    pub backend_status: gtk::Label,
     pub crop_overlay: gtk::DrawingArea,
     pub zoom_overlay: gtk::DrawingArea,
     pub edit_button: gtk::Button,
@@ -566,9 +568,19 @@ pub(crate) fn build() -> MainView {
     let status = gtk::Label::builder()
         .label("Ready")
         .xalign(0.0)
+        .hexpand(true)
         .ellipsize(gtk::pango::EllipsizeMode::End)
         .css_classes(["caption", "dim-label"])
         .build();
+    let backend_status = gtk::Label::builder()
+        .xalign(1.0)
+        .halign(gtk::Align::End)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .css_classes(["caption", "dim-label"])
+        .build();
+    let status_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    status_row.append(&status);
+    status_row.append(&backend_status);
 
     let bottom = gtk::Box::new(gtk::Orientation::Vertical, 8);
     bottom.set_margin_top(12);
@@ -577,7 +589,7 @@ pub(crate) fn build() -> MainView {
     bottom.set_margin_end(12);
     bottom.append(&progress_row);
     bottom.append(&composer);
-    bottom.append(&status);
+    bottom.append(&status_row);
 
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
     root.append(&reference_strip);
@@ -608,6 +620,7 @@ pub(crate) fn build() -> MainView {
         queue_bubble_label,
         cancel,
         status,
+        backend_status,
         crop_overlay,
         zoom_overlay,
         adjust_button,

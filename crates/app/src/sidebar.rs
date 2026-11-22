@@ -6,6 +6,12 @@ use imagiflume_core::size::RatioMatch;
 use imagiflume_core::style::STYLES;
 use imagiflume_core::{Config, size};
 
+/// Whether the current icon theme provides `name`.
+fn has_theme_icon(name: &str) -> bool {
+    gtk::gdk::Display::default()
+        .is_some_and(|display| gtk::IconTheme::for_display(&display).has_icon(name))
+}
+
 pub(crate) struct Sidebar {
     pub root: gtk::Box,
     pub model_dropdown: gtk::DropDown,
@@ -347,8 +353,15 @@ pub(crate) fn build(
         history_filter_buttons.push(check);
     }
     let filter_popover = gtk::Popover::builder().child(&filter_box).build();
+    // `view-filter-symbolic` is not in Adwaita, so some distros show a broken
+    // image. Fall back to a guaranteed Adwaita icon when the theme lacks it.
+    let filter_icon = if has_theme_icon("view-filter-symbolic") {
+        "view-filter-symbolic"
+    } else {
+        "view-list-symbolic"
+    };
     let history_filter_button = gtk::MenuButton::builder()
-        .icon_name("view-filter-symbolic")
+        .icon_name(filter_icon)
         .tooltip_text("Filter history: All images")
         .popover(&filter_popover)
         .css_classes(["flat"])

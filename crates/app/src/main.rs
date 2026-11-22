@@ -83,6 +83,8 @@ pub(crate) struct Ui {
     pub progress: gtk::ProgressBar,
     pub progress_row: gtk::Box,
     pub status: gtk::Label,
+    /// Currently selected inference backends, shown at the bottom right.
+    pub backend_status: gtk::Label,
     pub composer: gtk::Revealer,
     pub crop_overlay: gtk::DrawingArea,
     pub zoom_overlay: gtk::DrawingArea,
@@ -608,6 +610,7 @@ fn build_ui(app: &adw::Application) {
         progress: view.progress,
         progress_row: view.progress_row,
         status: view.status,
+        backend_status: view.backend_status,
         composer: view.composer,
         crop_overlay: view.crop_overlay,
         zoom_overlay: view.zoom_overlay,
@@ -809,6 +812,7 @@ fn build_ui(app: &adw::Application) {
     update_size_ui(&ui);
     update_image_view(&ui);
     update_queue_bubble(&ui);
+    update_backend_status(&ui);
 
     ui.window.present();
     show_composer(&ui, true);
@@ -1818,6 +1822,13 @@ fn target_size(ui: &Rc<Ui>) -> (u32, u32) {
         selected_ratio(ui),
         active_preset(ui).size_step,
     )
+}
+
+/// Refresh the bottom-right summary of the selected backends.
+pub(crate) fn update_backend_status(ui: &Ui) {
+    let summary = backends::active_summary(&ui.config.borrow());
+    ui.backend_status.set_text(&summary);
+    ui.backend_status.set_tooltip_text(Some(&summary));
 }
 
 pub(crate) fn update_size_ui(ui: &Rc<Ui>) {
@@ -4323,6 +4334,9 @@ fn start_generation_job(ui: &Rc<Ui>, job: queue::Job, request: GenerateRequest) 
                     complete_job(&ui, &job, Outcome::Failed(error), duration_ms);
                     finished = true;
                     break;
+                }
+                Progress::Warning(message) => {
+                    ui.toast.add_toast(adw::Toast::new(&message));
                 }
             }
         }

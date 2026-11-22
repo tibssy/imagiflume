@@ -131,6 +131,8 @@ pub enum Progress {
     Done(PathBuf),
     Cancelled,
     Failed(String),
+    /// A non-fatal warning, such as an automatic fallback to another device.
+    Warning(String),
     /// Raw log line from the backend. Useful for the log panel and debugging.
     Log(String),
 }

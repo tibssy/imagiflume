@@ -5,6 +5,13 @@ rough edges.
 
 ## 0.2.0-beta.1 — 2026-11-22
 
+- **Backends**: Vulkan is only offered when a Vulkan ICD is installed, and a
+  selected non-CPU backend that fails to start is retried with automatic device
+  selection plus a warning instead of failing the job. The bottom-right status
+  line now shows the active `sd-server` and `llama.cpp` backends.
+- **History filter icon**: falls back to `view-list-symbolic` when the icon
+  theme has no `view-filter-symbolic`, avoiding the broken-image icon on some
+  distros.
 - **Spinners**: the running-job spinner and the floating queue pill keep
   animating after the sidebar is hidden and shown again. GTK 4.24 pauses its
   built-in spinner animation on unmap and does not restart it on remap, so the
