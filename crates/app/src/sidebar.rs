@@ -24,7 +24,6 @@ pub(crate) struct Sidebar {
     pub random_button: gtk::Button,
     pub batch_spin: gtk::SpinButton,
     pub lora_button: gtk::Button,
-    pub lora_count: gtk::Label,
     pub new_button: gtk::Button,
     pub open_button: gtk::Button,
     pub select_button: gtk::Button,
@@ -268,22 +267,13 @@ pub(crate) fn build(
     batch_row.append(&field_label("Batch"));
     batch_row.append(&batch_choices);
 
-    let lora_count = gtk::Label::builder()
-        .label("0")
-        .valign(gtk::Align::Center)
-        .css_classes(["count-pill"])
-        .build();
     let lora_icon = gtk::Image::from_icon_name("application-x-addon-symbolic");
     lora_icon.set_pixel_size(16);
-    let lora_content = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-    lora_content.set_valign(gtk::Align::Center);
-    lora_content.append(&lora_icon);
-    lora_content.append(&lora_count);
     let lora_button = gtk::Button::builder()
         .tooltip_text("Manage LoRAs")
         .valign(gtk::Align::Center)
-        .css_classes(["flat"])
-        .child(&lora_content)
+        .css_classes(["flat", "lora-button"])
+        .child(&lora_icon)
         .build();
     let model_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     model_row.set_hexpand(true);
@@ -538,7 +528,6 @@ pub(crate) fn build(
         random_button,
         batch_spin,
         lora_button,
-        lora_count,
         new_button,
         open_button,
         select_button,

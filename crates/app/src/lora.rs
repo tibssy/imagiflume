@@ -83,12 +83,10 @@ pub(crate) fn refresh(ui: &Rc<Ui>) {
     };
 
     let active = ui.config.borrow().loras.clone();
-    let count = active.len();
-    ui.lora_count.set_text(&count.to_string());
-    if count == 0 {
-        ui.lora_count.remove_css_class("active");
+    if active.is_empty() {
+        ui.lora_button.remove_css_class("lora-button-active");
     } else {
-        ui.lora_count.add_css_class("active");
+        ui.lora_button.add_css_class("lora-button-active");
     }
     let names: Vec<String> = active
         .iter()

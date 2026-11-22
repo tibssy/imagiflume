@@ -6,8 +6,8 @@ rough edges.
 ## Unreleased
 
 - **Sidebar setup**: removed the installed-model caption, increased the spacing
-  between controls, and put the model dropdown and a LoRA icon/count button on
-  one row.
+  between controls, and put the model dropdown and LoRA button on one row. The
+  button uses the accent colour when any LoRA is active.
 - **LoRAs**: the icon opens a dedicated LoRA dialog with search, checkboxes,
   weights and folder controls. Changing the model clears active LoRAs because
   weights are model-specific.

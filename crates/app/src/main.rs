@@ -229,7 +229,6 @@ pub(crate) struct Ui {
     pub random_button: gtk::Button,
     pub batch_spin: gtk::SpinButton,
     pub lora_button: gtk::Button,
-    pub lora_count: gtk::Label,
     /// Resolved folder scanned for LoRA weights.
     pub lora_dir: PathBuf,
     /// Server log position before the running job, used to catch LoRAs the
@@ -388,17 +387,10 @@ fn install_styles() {
          .chain-toggle:hover {
              background-color: alpha(@accent_bg_color, 0.3);
          }
-         .count-pill {
-             background-color: alpha(@view_fg_color, 0.12);
-             color: @view_fg_color;
-             border-radius: 999px;
-             padding: 1px 6px;
-             font-size: 0.8em;
-             font-weight: bold;
-         }
-         .count-pill.active {
-             background-color: alpha(@accent_bg_color, 0.25);
+         .lora-button-active {
              color: @accent_color;
+             background-color: alpha(@accent_bg_color, 0.16);
+             border-radius: 8px;
          }
          .batch-choice {
              min-width: 32px;
@@ -699,7 +691,6 @@ fn build_ui(app: &adw::Application) {
         random_button: side.random_button,
         batch_spin: side.batch_spin,
         lora_button: side.lora_button,
-        lora_count: side.lora_count,
         lora_dir,
         lora_log_offset: Cell::new(None),
         state: RefCell::new(AppState::default()),
