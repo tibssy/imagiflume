@@ -639,6 +639,22 @@ binary will always depend on the host GTK stack.
 - Avoid models whose text encoder alone exceeds ~8 GB (FLUX.2 dev, Krea2 Q4,
   Qwen-Image-2.1, MOSS-Image): they run, but swap and take 10+ minutes.
 
+## Known issues
+
+- **Mask inpainting and outpainting are not available.** FLUX.1 Fill needs
+  roughly 10 GB of non-commercial weights and is too slow on 8 GB cards; the
+  implementation is preserved on the `tier3-inpaint` branch.
+- **Only the curated model presets are supported.** Arbitrary user-supplied
+  Hugging Face models are planned after beta.
+- **LoRAs are session-only.** They are cleared when the model changes and are
+  never restored on launch.
+- **AppImage is not published yet.** Use the Flatpak (or the Arch PKGBUILD for
+  native installs).
+- **3D object generation is not part of beta.**
+- If a run fails or a backend misbehaves, **Preferences → About → Diagnostics**
+  shows the detected hardware, the backend log path, and a **Copy diagnostics**
+  button for bug reports.
+
 ## Roadmap
 
 - ~~M2: history/gallery, seed control, resolution presets, persistence~~
