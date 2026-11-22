@@ -20,7 +20,8 @@ rough edges.
   separated by internal padding instead of gaps, so highlights and selection
   stay continuous. Grouped chains are flattened and expanded groups get a
   subtle accent tint so the chain reads as one block, without a separate
-  separator line under the last child.
+  separator line under the last child. Group headers are the same height as
+  the rows they contain.
 - **New icon**: the cream "if" monogram is now the app icon, with the same
   mark on the About page.
 - **Renamed to Imagiflume**: the app ID is now

@@ -409,7 +409,9 @@ fn build_chain_header(
     expander.set_activatable(false);
     if let Some(header) = expander_header_row(&expander) {
         header.set_activatable(false);
-        header.set_height_request(56);
+        // Child rows are 56px of content plus 12px of vertical margins; match
+        // that here so the group header is as tall as the rows it contains.
+        header.set_height_request(68);
     }
 
     {
