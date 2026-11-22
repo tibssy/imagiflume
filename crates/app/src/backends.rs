@@ -1115,7 +1115,6 @@ fn check_button(active: bool, tooltip: &str) -> gtk::Button {
         .css_classes(["flat", "backend-check"])
         .build();
     if active {
-        button.add_css_class("active-backend-icon");
         button.set_sensitive(false);
     }
     button
