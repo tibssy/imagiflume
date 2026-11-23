@@ -110,8 +110,11 @@ Milestone 3 (packaged desktop app):
   saved prompts, and `Alt+Up` / `Alt+Down` recall them while keeping the draft
   you were writing
 - **camera capture**: the camera button in the composer grabs one frame from
-  the first V4L2 device, adds it as a reference and shows it on the canvas;
-  it only appears when a camera and `ffmpeg` are available
+  the first camera, adds it as a reference and shows it on the canvas. It uses
+  the XDG camera portal, so the desktop asks for permission the first time and
+  the app can be toggled in **Settings → Privacy & Security → Camera**. Native
+  sessions without a camera portal fall back to V4L2; sandboxed builds always
+  go through the portal
 - **session restore**: optionally reopen the last image and draft prompt on
   launch (**Preferences → General**, on by default)
 - **view-only zoom** with a bottom-right pill: zoom in/out, real-pixel scale
@@ -289,7 +292,7 @@ without leaving the app.
 | Reorder waiting jobs | up/down arrows on a waiting queue row |
 | Duplicate a queued prompt | copy button on a waiting queue row |
 | Recall a previous prompt | history button in the composer, or `Alt+Up` / `Alt+Down` |
-| Take a photo | camera button in the composer (needs a camera and `ffmpeg`) |
+| Take a photo | camera button in the composer (asks for camera permission on first use) |
 | Choose LoRAs | **LoRAs…** in the sidebar |
 | Improve the prompt | ✨ button in the prompt field (needs `llama-cli`) |
 | New random seed | shuffle button next to the seed field |
@@ -444,6 +447,10 @@ Data locations:
 # 3. run
 cargo run --release
 ```
+
+Camera capture uses GStreamer: install `gstreamer`, `gst-plugins-base`,
+`gst-plugins-good` and `gst-plugin-pipewire` (names vary by distro), or use the
+Flatpak build.
 
 The app also downloads models itself: **Preferences → Models**, or on first run
 when no model is installed. Only installed presets appear in the sidebar
@@ -609,9 +616,12 @@ next.
 
 The GitHub alpha binaries are built on Debian 13 (trixie) in CI with GTK 4.18
 and libadwaita 1.7. The app binary is not bundled with its toolkit: it needs a
-host with **GTK 4.16+, libadwaita 1.6+ and glibc 2.39+** (Debian 13, Ubuntu
-24.04 or newer). A local `cargo build --release` instead matches your own
-distro's GTK stack, so it will not run on older releases than that distro.
+host with **GTK 4.16+, libadwaita 1.6+, GStreamer 1.20+ and glibc 2.39+**
+(Debian 13, Ubuntu 24.04 or newer). Camera capture additionally needs the
+PipeWire GStreamer plugin (`gst-plugin-pipewire`, `pipewire-gstreamer` or
+`gstreamer1.0-pipewire`, depending on the distro). A local
+`cargo build --release` instead matches your own distro's GTK stack, so it will
+not run on older releases than that distro.
 
 The backend archives are self-contained; the app binary is not. If a distro
 reports a missing library, check:

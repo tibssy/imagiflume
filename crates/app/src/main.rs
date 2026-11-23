@@ -1,5 +1,6 @@
 mod adjust;
 mod backends;
+mod camera;
 mod compare_view;
 mod effects;
 mod history;
@@ -805,7 +806,9 @@ fn build_ui(app: &adw::Application) {
         history_view::rebuild(&ui);
     }
     queue_view::rebuild(&ui);
-    ui.camera_button.set_visible(camera_available());
+    camera::init();
+    camera::register_host_app();
+    camera::refresh_availability(&ui);
     restore_session(&ui);
 
     if let Err(error) = ui.config.borrow().save() {
@@ -908,7 +911,7 @@ fn wire_events(ui: &Rc<Ui>, preferences_button: &gtk::Button) {
     {
         let ui = ui.clone();
         let button = ui.camera_button.clone();
-        button.connect_clicked(move |_| capture_camera(&ui));
+        button.connect_clicked(move |_| camera::capture(&ui));
     }
     {
         let ui = ui.clone();
@@ -3252,101 +3255,8 @@ fn add_reference_texture(ui: &Rc<Ui>, texture: &gdk::Texture) {
     add_references(ui, vec![path]);
 }
 
-/// First video capture device exposed by the kernel.
-fn camera_device() -> Option<PathBuf> {
-    (0..10)
-        .map(|index| PathBuf::from(format!("/dev/video{index}")))
-        .find(|path| path.exists())
-}
-
-/// Camera capture needs a device and ffmpeg for the V4L2 grab.
-fn camera_available() -> bool {
-    if camera_device().is_none() {
-        return false;
-    }
-    std::process::Command::new("ffmpeg")
-        .arg("-version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
-}
-
-/// Grab one frame from the camera and use it as an edit reference.
-fn capture_camera(ui: &Rc<Ui>) {
-    if ui.camera_busy.replace(true) {
-        return;
-    }
-    let Some(device) = camera_device() else {
-        ui.camera_busy.set(false);
-        return;
-    };
-    ui.camera_button.set_sensitive(false);
-    ui.status.set_text("Taking a photo…");
-
-    let directory = paths::cache_dir().join("camera");
-    if let Err(error) = std::fs::create_dir_all(&directory) {
-        ui.camera_busy.set(false);
-        ui.camera_button.set_sensitive(true);
-        ui.toast.add_toast(adw::Toast::new(&format!(
-            "Could not prepare the camera: {error}"
-        )));
-        return;
-    }
-    let path = directory.join(format!("camera-{}.png", now_millis()));
-    let captured = path.clone();
-    let (sender, receiver) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let result = std::process::Command::new("ffmpeg")
-            .args(["-hide_banner", "-loglevel", "error", "-f", "v4l2", "-i"])
-            .arg(&device)
-            .args(["-frames:v", "1", "-y"])
-            .arg(&captured)
-            .output();
-        let outcome = match result {
-            Ok(output) if output.status.success() && captured.is_file() => Ok(()),
-            Ok(output) => Err(String::from_utf8_lossy(&output.stderr).trim().to_string()),
-            Err(error) => Err(error.to_string()),
-        };
-        let _ = sender.send(outcome);
-    });
-
-    let ui = ui.clone();
-    glib::timeout_add_local(Duration::from_millis(80), move || {
-        match receiver.try_recv() {
-            Ok(Ok(())) => {
-                finish_camera(&ui, Ok(path.clone()));
-                glib::ControlFlow::Break
-            }
-            Ok(Err(error)) => {
-                finish_camera(&ui, Err(error));
-                glib::ControlFlow::Break
-            }
-            Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                finish_camera(&ui, Err("camera capture stopped".into()));
-                glib::ControlFlow::Break
-            }
-        }
-    });
-}
-
-fn finish_camera(ui: &Rc<Ui>, outcome: Result<PathBuf, String>) {
-    ui.camera_busy.set(false);
-    ui.camera_button.set_sensitive(true);
-    match outcome {
-        Ok(path) => add_references(ui, vec![path]),
-        Err(error) => {
-            let short = error.lines().last().unwrap_or(&error).to_string();
-            ui.status.set_text("Camera capture failed");
-            ui.toast
-                .add_toast(adw::Toast::new(&format!("Could not take a photo: {short}")));
-        }
-    }
-}
-
 /// Append picked images to the edit reference set.
-fn add_references(ui: &Rc<Ui>, paths: Vec<PathBuf>) {
+pub(crate) fn add_references(ui: &Rc<Ui>, paths: Vec<PathBuf>) {
     if references_busy(ui) {
         return;
     }

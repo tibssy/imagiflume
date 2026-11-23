@@ -11,11 +11,13 @@ path = "src/main.rs"
 [dependencies]
 adw.workspace = true
 anyhow.workspace = true
+ashpd.workspace = true
 async-channel.workspace = true
 imagiflume-backend-sdcpp = { path = "../backend-sdcpp" }
 imagiflume-core = { path = "../core" }
 imagiflume-models = { path = "../models" }
 glib.workspace = true
+gstreamer.workspace = true
 gtk.workspace = true
 image.workspace = true
 rusqlite.workspace = true

@@ -21,7 +21,8 @@ pkgdesc='GTK4/libadwaita desktop app for local image generation with stable-diff
 arch=('x86_64')
 url='https://github.com/tibssy/imagiflume'
 license=('GPL-3.0-or-later')
-depends=('gtk4' 'libadwaita' 'hicolor-icon-theme' 'openssl')
+depends=('gtk4' 'libadwaita' 'hicolor-icon-theme' 'openssl' 'gstreamer'
+         'gst-plugins-base' 'gst-plugins-good' 'gst-plugin-pipewire')
 makedepends=('cargo' 'rust' 'cmake' 'ninja' 'git' 'cuda' 'gcc14')
 optdepends=('nvidia-utils: CUDA inference on NVIDIA GPUs'
             'llama.cpp: prompt improvement using the active text encoder')

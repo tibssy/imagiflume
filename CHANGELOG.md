@@ -11,6 +11,14 @@ rough edges.
   line shows the selected `sd-server` and `llama.cpp` backends, switches the
   `sd-server` label to `auto` after such a fallback, and shows llama.cpp as
   `CPU (Vulkan build)` when its helper falls back because no device is present.
+- **Camera permissions**: capture goes through the XDG camera portal. The
+  first use asks for permission, GNOME lists Imagiflume under
+  **Settings → Privacy & Security → Camera**, and a denial points at that
+  setting instead of silently opening the device. Frames are read from the
+  portal's PipeWire stream with GStreamer, which also removes the `ffmpeg`
+  requirement. The Flatpak now requests `--device=dri` instead of the broad
+  `--device=all`; native sessions without a camera portal keep the V4L2
+  fallback.
 - **Diagnostics**: About now shows detected hardware and the backend log paths,
   including a new persistent `llama-cli.log`, with an open-log button and a
   **Copy diagnostics** action that includes the version, channel, locale, GPU,
