@@ -151,6 +151,21 @@ Milestone 3 (packaged desktop app):
 - first run opens the Models page when the active preset is missing
 - PKGBUILD, `.desktop` entry and scalable icon
 
+### Reliability
+
+The 0.2.0 beta was tested against the three failures that used to strand a job:
+
+- **backend killed mid-job**: the job fails with a clear message, the queue
+  clears, History is unchanged and the next job restarts the server
+- **CUDA out of memory**: the job fails with a size/offload hint, the app stays
+  usable and a smaller job completes
+- **model file removed or changed mid-job**: the job fails cleanly and
+  Preferences marks the missing file
+
+Failed jobs never leave a broken History entry. Verified on an 8 GB Quadro
+M4000 with CUDA 12; the toast names the reason from the backend log instead of
+a raw HTTP error.
+
 ## Models
 
 | Preset | Files | Steps | Measured @768² | Peak VRAM |
@@ -579,17 +594,12 @@ backends or install the Vulkan backend from Preferences.
 The package builds the CUDA backend for Maxwell by default:
 
 ```bash
-# build a source tarball from this checkout (vendor/, models/ and build
-# artifacts are not shipped)
-tar --transform 's,^,imagiflume-0.1.0/,' -czf packaging/imagiflume-0.1.0.tar.gz \
-    Cargo.toml Cargo.lock LICENSE README.md .gitignore crates scripts \
-    packaging/PKGBUILD packaging/io.github.tibssy.Imagiflume.desktop \
-    packaging/io.github.tibssy.Imagiflume.svg \
-    packaging/io.github.tibssy.Imagiflume.metainfo.xml
-
 cd packaging
 IMAGIFLUME_CUDA_ARCH=52 makepkg -si
 ```
+
+The PKGBUILD fetches the release source archive; build artifacts, `vendor/`
+and `models/` are not shipped.
 
 The installed binary discovers a backend in this order: `IMAGIFLUME_SD_SERVER`,
 `sd_server` in the config, a sibling of `sd_cli`, a server next to the app

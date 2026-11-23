@@ -1,15 +1,11 @@
 # Maintainer: tibssy <tibssy@users.noreply.github.com>
 #
-# Build from a release tarball. Until the repository is published you can
-# produce one from the working tree:
+# Build from the tagged source archive:
 #
-#   tar --transform 's,^,imagiflume-0.2.0beta1/,' -czf imagiflume-0.2.0beta1.tar.gz \
-#       Cargo.toml Cargo.lock LICENSE README.md .gitignore crates scripts \
-#       packaging/PKGBUILD packaging/io.github.tibssy.Imagiflume.desktop \
-#       packaging/io.github.tibssy.Imagiflume.svg \
-#       packaging/io.github.tibssy.Imagiflume.metainfo.xml
+#   cd packaging && makepkg -si
 #
-# then run `makepkg -si` in this directory.
+# The archive checksum is pinned to the GitHub tag in _tag below. AUR
+# publication waits until registration reopens.
 #
 # The CUDA backend is compiled for Maxwell (sm_52) by default. Override with
 # IMAGIFLUME_CUDA_ARCH=86 (Ampere), 89 (Ada), 120 (Blackwell), etc.
@@ -17,6 +13,7 @@
 pkgname=imagiflume
 pkgver=0.2.0beta1
 pkgrel=1
+_tag="0.2.0-beta.1"
 pkgdesc='GTK4/libadwaita desktop app for local image generation with stable-diffusion.cpp'
 arch=('x86_64')
 url='https://github.com/tibssy/imagiflume'
@@ -26,14 +23,14 @@ depends=('gtk4' 'libadwaita' 'hicolor-icon-theme' 'openssl' 'gstreamer'
 makedepends=('cargo' 'rust' 'cmake' 'ninja' 'git' 'cuda' 'gcc14')
 optdepends=('nvidia-utils: CUDA inference on NVIDIA GPUs'
             'llama.cpp: prompt improvement using the active text encoder')
-source=("$pkgname-$pkgver.tar.gz"
+source=("$pkgname-$_tag.tar.gz::https://github.com/tibssy/imagiflume/archive/refs/tags/v$_tag.tar.gz"
         "stable-diffusion.cpp::git+https://github.com/leejet/stable-diffusion.cpp#commit=32d516c0197ed5ca31305b8575e14eb1451fad33")
 sha256sums=('SKIP' 'SKIP')
 
 _cuda_arch="${IMAGIFLUME_CUDA_ARCH:-52}"
 
 build() {
-  cd "$pkgname-$pkgver"
+  cd "$srcdir/$pkgname-$_tag"
   SDCPP_SRC="$srcdir/stable-diffusion.cpp" CUDA_ARCH="$_cuda_arch" \
     HOST_CC=gcc-14 HOST_CXX=g++-14 ./scripts/build-sdcpp.sh
 
@@ -47,7 +44,7 @@ build() {
 }
 
 package() {
-  cd "$pkgname-$pkgver"
+  cd "$srcdir/$pkgname-$_tag"
 
   install -Dm755 target/release/imagiflume "$pkgdir/usr/bin/imagiflume"
   install -Dm755 "$srcdir/stable-diffusion.cpp/build/bin/sd-server" \
@@ -61,4 +58,6 @@ package() {
     "$pkgdir/usr/share/metainfo/io.github.tibssy.Imagiflume.metainfo.xml"
 
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$srcdir/stable-diffusion.cpp/LICENSE" \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE.stable-diffusion.cpp"
 }
