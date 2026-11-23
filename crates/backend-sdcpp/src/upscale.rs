@@ -1,13 +1,14 @@
-//! Image upscaling through `sd-server`'s `/sdcpp/v1/upscale` endpoint.
+//! Image upscaling through `sd-server`, with an `sd-cli` fallback.
 //!
-//! This runs in its own model-less server process so an upscale never loads
-//! the multi-gigabyte diffusion model. It also gives cancellation a process to
-//! kill without disturbing generation.
+//! Older backends expose `/sdcpp/v1/upscale` and keep the model loaded in a
+//! separate model-less server process. stable-diffusion.cpp `3b12781` removed
+//! that endpoint, so newer backends run `sd-cli -M upscale` per request. Both
+//! paths avoid loading the multi-gigabyte diffusion model.
 
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -31,6 +32,8 @@ pub struct SdUpscaleServer {
     inner: Arc<Mutex<Inner>>,
     busy: Arc<AtomicBool>,
     cancelling: Arc<AtomicBool>,
+    /// PID of a running `sd-cli -M upscale` fallback process.
+    cli_pid: Arc<AtomicU32>,
 }
 
 struct Inner {
@@ -40,6 +43,16 @@ struct Inner {
     port: u16,
     log: PathBuf,
     last_used: Instant,
+    /// `None` until the backend is probed. `false` means the backend dropped
+    /// `/sdcpp/v1/upscale` and uses the `sd-cli` fallback.
+    http_upscale: Option<bool>,
+}
+
+struct RunContext<'a> {
+    model_path: &'a Path,
+    native_width: u32,
+    native_height: u32,
+    request: &'a UpscaleRequest,
 }
 
 impl SdUpscaleServer {
@@ -54,6 +67,7 @@ impl SdUpscaleServer {
             port: 0,
             log,
             last_used: Instant::now(),
+            http_upscale: None,
         }));
         let busy = Arc::new(AtomicBool::new(false));
 
@@ -81,6 +95,7 @@ impl SdUpscaleServer {
             inner,
             busy,
             cancelling: Arc::new(AtomicBool::new(false)),
+            cli_pid: Arc::new(AtomicU32::new(0)),
         }
     }
 
@@ -90,6 +105,7 @@ impl SdUpscaleServer {
         inner.stop();
         inner.config.cli = cli;
         inner.config.backend = backend;
+        inner.http_upscale = None;
     }
 
     /// Release the upscale server process and its CUDA context.
@@ -103,6 +119,7 @@ impl SdUpscaleServer {
 
     pub fn cancel(&self) -> Result<()> {
         self.cancelling.store(true, Ordering::SeqCst);
+        kill_process(self.cli_pid.swap(0, Ordering::SeqCst));
         let mut inner = self.inner.lock().expect("upscale server mutex");
         inner.stop();
         Ok(())
@@ -140,18 +157,42 @@ impl SdUpscaleServer {
             .checked_mul(preset.scale)
             .ok_or_else(|| anyhow!("image is too large to upscale"))?;
 
-        let bytes = std::fs::read(&request.input)
-            .with_context(|| format!("failed to read {}", request.input.display()))?;
-        let data_url = data_url(&request.input, &bytes);
-
         self.busy.store(true, Ordering::SeqCst);
-        let result = self.run(
-            preset.server_name,
-            &data_url,
-            native_width,
-            native_height,
-            request,
-        );
+        let result = (|| -> Result<UpscaledImage> {
+            let (http_upscale, port, client, sd_cli, backend, log) = {
+                let mut inner = self.inner.lock().expect("upscale server mutex");
+                let http = inner.ensure_started()?;
+                (
+                    http,
+                    inner.port,
+                    inner.client.clone(),
+                    sibling_cli(&inner.config.cli),
+                    inner.config.backend.clone(),
+                    inner.log.clone(),
+                )
+            };
+
+            if http_upscale {
+                let bytes = std::fs::read(&request.input)
+                    .with_context(|| format!("failed to read {}", request.input.display()))?;
+                let data_url = data_url(&request.input, &bytes);
+                let context = RunContext {
+                    model_path: &model_path,
+                    native_width,
+                    native_height,
+                    request,
+                };
+                self.run_http(port, &client, preset.server_name, &data_url, &context)
+            } else {
+                let context = RunContext {
+                    model_path: &model_path,
+                    native_width,
+                    native_height,
+                    request,
+                };
+                self.run_cli(&sd_cli, backend.as_deref(), &log, &context)
+            }
+        })();
         self.busy.store(false, Ordering::SeqCst);
         {
             let mut inner = self.inner.lock().expect("upscale server mutex");
@@ -160,14 +201,16 @@ impl SdUpscaleServer {
         result
     }
 
-    fn run(
+    fn run_http(
         &self,
+        port: u16,
+        client: &reqwest::blocking::Client,
         server_name: &str,
         data_url: &str,
-        native_width: u32,
-        native_height: u32,
-        request: &UpscaleRequest,
+        context: &RunContext<'_>,
     ) -> Result<UpscaledImage> {
+        let (native_width, native_height, request) =
+            (context.native_width, context.native_height, context.request);
         let mut tile_size = if request.tile_size == 0 {
             DEFAULT_TILE_SIZE
         } else {
@@ -175,12 +218,9 @@ impl SdUpscaleServer {
         };
 
         loop {
-            let (port, client) = {
-                let mut inner = self.inner.lock().expect("upscale server mutex");
-                inner.ensure_started()?;
-                (inner.port, inner.client.clone())
-            };
-
+            if self.cancelling.load(Ordering::SeqCst) {
+                bail!("upscaling cancelled");
+            }
             let url = format!("http://127.0.0.1:{port}/sdcpp/v1/upscale");
             let body = json!({
                 "image": data_url,
@@ -271,18 +311,169 @@ impl SdUpscaleServer {
             });
         }
     }
+
+    fn run_cli(
+        &self,
+        sd_cli: &Path,
+        backend: Option<&str>,
+        log_path: &Path,
+        context: &RunContext<'_>,
+    ) -> Result<UpscaledImage> {
+        let (model_path, native_width, native_height, request) = (
+            context.model_path,
+            context.native_width,
+            context.native_height,
+            context.request,
+        );
+        if !sd_cli.exists() {
+            bail!(
+                "{} is missing; install a backend that includes sd-cli or select an older backend",
+                sd_cli.display()
+            );
+        }
+        let mut tile_size = if request.tile_size == 0 {
+            DEFAULT_TILE_SIZE
+        } else {
+            request.tile_size
+        };
+
+        loop {
+            if self.cancelling.load(Ordering::SeqCst) {
+                bail!("upscaling cancelled");
+            }
+            let temp = imagiflume_core::paths::cache_dir()
+                .join(format!("upscale-cli-{}.png", std::process::id()));
+            let _ = std::fs::remove_file(&temp);
+
+            let mut command = Command::new(sd_cli);
+            command
+                .arg("-M")
+                .arg("upscale")
+                .arg("--init-img")
+                .arg(&request.input)
+                .arg("--upscale-model")
+                .arg(model_path)
+                .arg("--upscale-repeats")
+                .arg("1")
+                .arg("--upscale-tile-size")
+                .arg(tile_size.to_string())
+                .arg("-o")
+                .arg(&temp)
+                .arg("-v")
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            if let Some(backend) = backend {
+                command.arg("--backend").arg(backend);
+            }
+
+            #[cfg(target_os = "linux")]
+            unsafe {
+                use std::os::unix::process::CommandExt;
+                command.pre_exec(|| {
+                    let _ = libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+                    Ok(())
+                });
+            }
+
+            let child = command
+                .spawn()
+                .with_context(|| format!("failed to spawn {}", sd_cli.display()))?;
+            let pid = child.id();
+            self.cli_pid.store(pid, Ordering::SeqCst);
+            if self.cancelling.load(Ordering::SeqCst) {
+                kill_process(pid);
+            }
+            let output = child
+                .wait_with_output()
+                .context("failed to wait for sd-cli")?;
+            self.cli_pid.store(0, Ordering::SeqCst);
+
+            let log = format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            append_log(log_path, &log);
+
+            if self.cancelling.load(Ordering::SeqCst) {
+                let _ = std::fs::remove_file(&temp);
+                bail!("upscaling cancelled");
+            }
+            if !output.status.success() {
+                if is_out_of_memory(&log) && tile_size > FALLBACK_TILE_SIZE {
+                    tracing::warn!(
+                        tile_size,
+                        fallback = FALLBACK_TILE_SIZE,
+                        "upscaler ran out of VRAM; retrying with a smaller tile"
+                    );
+                    tile_size = FALLBACK_TILE_SIZE;
+                    let _ = std::fs::remove_file(&temp);
+                    continue;
+                }
+                bail!("upscaler failed: {}", log_tail(&log));
+            }
+
+            let (width, height) = image::image_dimensions(&temp).with_context(|| {
+                format!(
+                    "upscaler did not write {}: {}",
+                    temp.display(),
+                    log_tail(&log)
+                )
+            })?;
+            if width != native_width || height != native_height {
+                let _ = std::fs::remove_file(&temp);
+                bail!(
+                    "upscaler returned {width} × {height} instead of {native_width} × {native_height}"
+                );
+            }
+
+            if let Some(parent) = request.output.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+
+            let result = if request.factor == 2 {
+                let image = image::open(&temp).context("upscaler returned an unreadable image")?;
+                let width = width / 2;
+                let height = height / 2;
+                let resized = image.resize_exact(width, height, FilterType::Lanczos3);
+                resized
+                    .save(&request.output)
+                    .with_context(|| format!("failed to write {}", request.output.display()))?;
+                UpscaledImage {
+                    path: request.output.clone(),
+                    width,
+                    height,
+                }
+            } else {
+                std::fs::copy(&temp, &request.output)
+                    .with_context(|| format!("failed to write {}", request.output.display()))?;
+                UpscaledImage {
+                    path: request.output.clone(),
+                    width,
+                    height,
+                }
+            };
+
+            let _ = std::fs::remove_file(&temp);
+            return Ok(result);
+        }
+    }
 }
 
 impl Inner {
-    fn ensure_started(&mut self) -> Result<()> {
+    fn ensure_started(&mut self) -> Result<bool> {
         if let Some(child) = self.child.as_mut()
             && child.try_wait()?.is_some()
         {
             self.child = None;
         }
+        if self.http_upscale == Some(false) {
+            return Ok(false);
+        }
         if self.child.is_some() {
             self.last_used = Instant::now();
-            return Ok(());
+            return Ok(true);
         }
 
         let port = free_port()?;
@@ -328,12 +519,16 @@ impl Inner {
             .with_context(|| format!("failed to spawn {}", self.config.cli.display()))?;
         self.child = Some(child);
         self.port = port;
-        self.wait_ready(&upscalers_dir)?;
+        let http = self.wait_ready(&upscalers_dir)?;
+        self.http_upscale = Some(http);
+        if !http {
+            self.stop();
+        }
         self.last_used = Instant::now();
-        Ok(())
+        Ok(http)
     }
 
-    fn wait_ready(&mut self, upscalers_dir: &Path) -> Result<()> {
+    fn wait_ready(&mut self, upscalers_dir: &Path) -> Result<bool> {
         let deadline = Instant::now() + START_TIMEOUT;
         let url = format!("http://127.0.0.1:{}/sdcpp/v1/capabilities", self.port);
         loop {
@@ -351,14 +546,18 @@ impl Inner {
                 && response.status().is_success()
                 && let Ok(capabilities) = response.json::<Capabilities>()
             {
-                if capabilities.upscale {
-                    return Ok(());
+                match capabilities.upscale {
+                    Some(true) => return Ok(true),
+                    // 3b12781+ dropped the endpoint; use `sd-cli -M upscale`.
+                    None => return Ok(false),
+                    Some(false) => {
+                        self.stop();
+                        bail!(
+                            "no compatible upscaler models found in {}",
+                            upscalers_dir.display()
+                        );
+                    }
                 }
-                self.stop();
-                bail!(
-                    "no compatible upscaler models found in {}",
-                    upscalers_dir.display()
-                );
             }
 
             if Instant::now() >= deadline {
@@ -385,7 +584,8 @@ impl Drop for Inner {
 
 #[derive(Deserialize)]
 struct Capabilities {
-    upscale: bool,
+    /// Missing on builds that removed `/sdcpp/v1/upscale`.
+    upscale: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -398,6 +598,39 @@ struct UpscaleResponse {
 #[derive(Deserialize)]
 struct EncodedImage {
     b64_json: String,
+}
+
+fn sibling_cli(server: &Path) -> PathBuf {
+    server.with_file_name("sd-cli")
+}
+
+fn kill_process(pid: u32) {
+    #[cfg(unix)]
+    if pid > 0 {
+        // The fallback CLI is short-lived; SIGTERM is enough.
+        unsafe {
+            libc::kill(pid as i32, libc::SIGTERM);
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = pid;
+}
+
+fn append_log(path: &Path, text: &str) {
+    use std::io::Write;
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "{text}");
+    }
+}
+
+fn log_tail(text: &str) -> String {
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    let start = lines.len().saturating_sub(6);
+    lines[start..].join(" | ")
 }
 
 fn is_out_of_memory(detail: &str) -> bool {
@@ -447,6 +680,22 @@ mod tests {
         assert!(png.starts_with("data:image/png;base64,"));
         let jpeg = data_url(Path::new("/tmp/a.JPG"), b"abc");
         assert!(jpeg.starts_with("data:image/jpeg;base64,"));
+    }
+
+    #[test]
+    fn detects_a_missing_http_upscale_endpoint() {
+        let old: Capabilities = serde_json::from_str(r#"{"upscale":true}"#).unwrap();
+        assert_eq!(old.upscale, Some(true));
+        let new: Capabilities = serde_json::from_str(r#"{"upscalers":[]}"#).unwrap();
+        assert_eq!(new.upscale, None);
+    }
+
+    #[test]
+    fn finds_sd_cli_next_to_the_server() {
+        assert_eq!(
+            sibling_cli(Path::new("/opt/imagiflume/sd-server")),
+            PathBuf::from("/opt/imagiflume/sd-cli")
+        );
     }
 
     #[test]

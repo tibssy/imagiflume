@@ -39,6 +39,11 @@ An entry with an empty `url`, zero `size`, or empty `sha256` is shown as
 accepts both. Unknown states now produce a short error naming the reported
 state instead of waiting out the full 180 s startup timeout.
 
+The same release removed `POST /sdcpp/v1/upscale`. The app detects this from
+the capabilities response and runs `sd-cli -M upscale` instead, with the same
+VRAM retry and 2× downscale handling. Backend archives should therefore keep
+both `sd-server` and `sd-cli`.
+
 ## Upstream CPU / Vulkan / ROCm
 
 The current entries pin `leejet/stable-diffusion.cpp` `master-1094-3bad892`:
