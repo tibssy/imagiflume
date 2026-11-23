@@ -69,6 +69,12 @@
   </keywords>
 
   <releases>
+    <release version="0.2.0-beta.3" date="2026-11-23">
+      <description>
+        <p>Restore upscaling on backends that removed the HTTP upscale
+          endpoint by running sd-cli -M upscale.</p>
+      </description>
+    </release>
     <release version="0.2.0-beta.2" date="2026-11-23">
       <description>
         <p>Accept the lazily configured state reported by stable-diffusion.cpp

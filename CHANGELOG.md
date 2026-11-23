@@ -3,7 +3,7 @@
 All notable changes to Imagiflume. Alpha builds are test releases; expect
 rough edges.
 
-## Unreleased
+## 0.2.0-beta.3 — 2026-11-23
 
 - **Upscaling on new backends**: stable-diffusion.cpp `3b12781` removed
   `POST /sdcpp/v1/upscale`, so upscaling now falls back to

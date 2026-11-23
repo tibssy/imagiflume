@@ -1431,7 +1431,7 @@ dependencies = [
 
 [[package]]
 name = "imagiflume"
-version = "0.2.0-beta.2"
+version = "0.2.0-beta.3"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -1455,7 +1455,7 @@ dependencies = [
 
 [[package]]
 name = "imagiflume-backend-sdcpp"
-version = "0.2.0-beta.2"
+version = "0.2.0-beta.3"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -1471,7 +1471,7 @@ dependencies = [
 
 [[package]]
 name = "imagiflume-core"
-version = "0.2.0-beta.2"
+version = "0.2.0-beta.3"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -1485,7 +1485,7 @@ dependencies = [
 
 [[package]]
 name = "imagiflume-models"
-version = "0.2.0-beta.2"
+version = "0.2.0-beta.3"
 dependencies = [
  "anyhow",
  "async-channel",
