@@ -45,7 +45,9 @@ rough edges.
   installed and appears (or disappears) immediately after downloading or
   deleting one in Preferences.
 - **Queue**: the queue expander is hosted in a list box, so Adwaita no longer
-  warns that an `AdwExpanderRow` was placed into a `GtkBox`.
+  warns that an `AdwExpanderRow` was placed into a `GtkBox`. Its expanded
+  content uses the same rounded accent tint as an expanded history group
+  instead of Adwaita's darker nested-list shade.
 - **llama.cpp plumbing**: all helpers (CPU, Vulkan, ROCm 10, CUDA 12 and
   CUDA 13) are now static `LLAMA_OPENSSL=OFF` builds, so none of them requires
   `libssl` on minimal distros. Prompt-improvement failures still add the

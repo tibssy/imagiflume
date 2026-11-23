@@ -456,6 +456,7 @@ pub(crate) fn build(
         .subtitle_lines(1)
         .expanded(false)
         .build();
+    queue_expander.add_css_class("queue-row");
     let queue_clear = gtk::Button::builder()
         .icon_name("edit-clear-symbolic")
         .tooltip_text("Remove all waiting jobs")
@@ -479,13 +480,14 @@ pub(crate) fn build(
 
     let queue_list = gtk::ListBox::builder()
         .selection_mode(gtk::SelectionMode::None)
-        .css_classes(["navigation-sidebar"])
+        .css_classes(["navigation-sidebar", "queue-list"])
         .build();
     let queue_scroller = gtk::ScrolledWindow::builder()
         .child(&queue_list)
         .propagate_natural_height(true)
         .max_content_height(170)
         .vexpand(false)
+        .css_classes(["queue-scroller"])
         .build();
     queue_expander.add_row(&queue_scroller);
 

@@ -349,8 +349,39 @@ fn install_styles() {
          .filter-active {
              color: @accent_color;
          }
-         .queue-wrapper {
+         .queue-wrapper,
+         .queue-scroller,
+         .queue-list {
              background: none;
+         }
+         /* The queue mirrors the tinted, rounded block of an expanded history
+            chain instead of Adwaita's darker expander content shade. */
+         row.expander.queue-row,
+         row.expander.queue-row:hover,
+         row.expander.queue-row:selected {
+             background: none;
+         }
+         row.expander.queue-row list.nested,
+         row.expander.queue-row list.nested > row,
+         row.expander.queue-row list.nested > row:hover {
+             background: none;
+         }
+         row.expander.queue-row list.nested > row {
+             border-bottom: none;
+         }
+         row.expander.queue-row:checked,
+         row.expander.queue-row:checked:hover,
+         row.expander.queue-row:checked:selected {
+             background-color: alpha(@accent_bg_color, 0.1);
+             border-radius: 12px;
+         }
+         row.expander.queue-row > box > list > row.header:hover {
+             background-color: alpha(@view_fg_color, 0.07);
+             border-radius: 9px;
+         }
+         row.expander.queue-row:selected > box > list > row.header {
+             background-color: alpha(@view_fg_color, 0.1);
+             border-radius: 9px;
          }
          .queue-bubble {
              background-image: none;
