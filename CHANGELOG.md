@@ -41,6 +41,13 @@ rough edges.
   including a new persistent `llama-cli.log`, with an open-log button and a
   **Copy diagnostics** action that includes the version, channel, locale, GPU,
   backend, paths and log locations.
+- **Backend crash and OOM messages**: when `sd-server` is killed mid-job or
+  reports only `generate_image returned no results`, the toast names the real
+  cause from the backend log instead of showing a raw `GET` URL. A CUDA
+  out-of-memory failure points at the image size and **Offload weights to
+  CPU**, and a model file that was removed or changed mid-job points at
+  Preferences. The log is only read from the current job, so an earlier
+  failure is not blamed on a later one.
 - **Canvas**: the upscale button is hidden when no upscaler weights are
   installed and appears (or disappears) immediately after downloading or
   deleting one in Preferences.

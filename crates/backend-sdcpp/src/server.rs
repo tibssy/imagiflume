@@ -6,6 +6,7 @@
 //! inactivity (or when the user switches models).
 
 use std::fs::OpenOptions;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -188,7 +189,7 @@ impl SdServer {
         let model = preset(&request.preset_id)
             .ok_or_else(|| anyhow!("unknown model preset {:?}", request.preset_id))?;
 
-        let port = {
+        let (port, log) = {
             let mut inner = self.inner.lock().expect("server mutex");
             inner.busy = true;
             inner.last_used = Instant::now();
@@ -198,7 +199,7 @@ impl SdServer {
                 let _ = progress.send_blocking(Progress::Cancelled);
                 bail!("generation cancelled");
             }
-            inner.port
+            (inner.port, inner.log.clone())
         };
 
         for reference in &request.reference_images {
@@ -219,6 +220,7 @@ impl SdServer {
         if let Some(parent) = request.output.parent() {
             std::fs::create_dir_all(parent)?;
         }
+        let log_offset = std::fs::metadata(&log).map(|meta| meta.len()).unwrap_or(0);
 
         let (client, preview_loaded) = {
             let inner = self.inner.lock().expect("server mutex");
@@ -307,13 +309,15 @@ impl SdServer {
             }
 
             let url = format!("http://127.0.0.1:{port}/sdcpp/v1/jobs/{}", submitted.id);
-            let response = client
-                .get(&url)
-                .timeout(Duration::from_secs(15))
-                .send()
-                .with_context(|| format!("GET {url}"))?;
+            let response = match client.get(&url).timeout(Duration::from_secs(15)).send() {
+                Ok(response) => response,
+                Err(error) => {
+                    tracing::warn!(%error, "lost the image backend while polling a job");
+                    bail!(backend_stopped(&log, log_offset));
+                }
+            };
             if !response.status().is_success() {
-                bail!("job disappeared (HTTP {})", response.status());
+                bail!(backend_stopped(&log, log_offset));
             }
             let job: Job = response.json().context("invalid job status")?;
 
@@ -359,6 +363,14 @@ impl SdServer {
                         .error
                         .map(|error| error.message)
                         .unwrap_or_else(|| "generation failed".into());
+                    // The server often only reports "no results" (OOM, a model
+                    // file that vanished mid-load), so prefer the concrete
+                    // reason from its log when we have one.
+                    let message = if is_generic_failure(&message) {
+                        failure_hint(&log, log_offset).unwrap_or(message)
+                    } else {
+                        message
+                    };
                     let _ = progress.send_blocking(Progress::Failed(message.clone()));
                     bail!(message);
                 }
@@ -631,13 +643,69 @@ impl Job {
     }
 }
 
+/// The server's own wording for failures it does not explain further.
+fn is_generic_failure(message: &str) -> bool {
+    let message = message.trim();
+    message.is_empty() || message == "generation failed" || message.contains("returned no results")
+}
+
+/// Describe a failure that killed or stalled the running server.
+fn backend_stopped(log: &Path, from: u64) -> String {
+    match failure_hint(log, from) {
+        Some(hint) => format!("the image backend stopped unexpectedly: {hint}"),
+        None => "the image backend stopped unexpectedly — see Preferences → About → Diagnostics for the log".into(),
+    }
+}
+
+/// Read the concrete reason for a failed job from the end of the server log.
+///
+/// `sd-server` reports "generate_image returned no results" for an out-of-memory
+/// error or a model file that disappeared, and a killed server leaves only a
+/// connection error. Its log still names the real cause.
+fn failure_hint(log: &Path, from: u64) -> Option<String> {
+    let text = read_log_tail(log, from, 64 * 1024)?;
+    if let Some(hint) = shared_library_hint(&text) {
+        return Some(hint);
+    }
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("cudamalloc failed")
+        || lower.contains("out of memory")
+        || lower.contains("failed to allocate cuda")
+    {
+        return Some(
+            "the GPU ran out of memory — lower the image size or enable Offload weights to CPU in Preferences".into(),
+        );
+    }
+    if lower.contains("cannot inspect model source")
+        || lower.contains("model source changed")
+        || lower.contains("failed to open")
+        || lower.contains("no such file or directory")
+    {
+        return Some("a model file is missing or changed — check it in Preferences".into());
+    }
+    None
+}
+
+fn read_log_tail(path: &Path, from: u64, max_bytes: u64) -> Option<String> {
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    let start = len.saturating_sub(max_bytes).max(from);
+    file.seek(SeekFrom::Start(start)).ok()?;
+    let mut buffer = Vec::new();
+    file.take(max_bytes).read_to_end(&mut buffer).ok()?;
+    Some(String::from_utf8_lossy(&buffer).into_owned())
+}
+
 /// Turn a dynamic-loader failure into a short, user-facing reason.
 ///
 /// A custom backend built against host libraries exits before the server is
 /// ready. The generated message already points at the log, but the missing
 /// soname is what the user needs to see in the toast.
 fn loader_hint(log: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(log).ok()?;
+    shared_library_hint(&std::fs::read_to_string(log).ok()?)
+}
+
+fn shared_library_hint(text: &str) -> Option<String> {
     text.lines().rev().find_map(|line| {
         let (_, detail) = line.split_once("error while loading shared libraries:")?;
         let library = detail.trim().split(':').next()?.trim();
@@ -705,5 +773,67 @@ mod tests {
         std::fs::write(&path, "model failed to load\n").unwrap();
         assert_eq!(loader_hint(&path), None);
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn reports_an_out_of_memory_failure() {
+        let path = std::env::temp_dir().join(format!("flux-oom-hint-{}.log", std::process::id()));
+        std::fs::write(
+            &path,
+            "[E] ggml_backend_cuda_buffer_type_alloc_buffer: allocating 1011 MiB \
+             on device 0: cudaMalloc failed: out of memory\n",
+        )
+        .unwrap();
+        let hint = failure_hint(&path, 0).expect("oom hint");
+        assert!(hint.contains("ran out of memory"), "{hint}");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn reports_a_missing_model_file() {
+        let path =
+            std::env::temp_dir().join(format!("flux-missing-hint-{}.log", std::process::id()));
+        std::fs::write(
+            &path,
+            "[E] cannot inspect model source '/models/text_encoders/Qwen3-4B.gguf': \
+             No such file or directory\n",
+        )
+        .unwrap();
+        let hint = failure_hint(&path, 0).expect("missing model hint");
+        assert!(hint.contains("model file"), "{hint}");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn reports_a_model_file_changed_mid_job() {
+        let path =
+            std::env::temp_dir().join(format!("flux-changed-hint-{}.log", std::process::id()));
+        std::fs::write(
+            &path,
+            "[E] model source changed; refresh it before execution: \
+             '/models/text_encoders/Qwen3-4B.gguf'\n",
+        )
+        .unwrap();
+        let hint = failure_hint(&path, 0).expect("changed model hint");
+        assert!(hint.contains("model file"), "{hint}");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn ignores_failures_before_the_job_started() {
+        let path =
+            std::env::temp_dir().join(format!("flux-offset-hint-{}.log", std::process::id()));
+        let old = "cudaMalloc failed: out of memory\n";
+        std::fs::write(&path, old).unwrap();
+        std::fs::write(&path, format!("{old}sampling\n")).unwrap();
+        assert_eq!(failure_hint(&path, old.len() as u64), None);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn only_generic_failures_use_the_log_hint() {
+        assert!(is_generic_failure("generate_image returned no results"));
+        assert!(is_generic_failure("generation failed"));
+        assert!(!is_generic_failure("LoRA weight could not be loaded"));
     }
 }
