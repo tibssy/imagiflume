@@ -34,18 +34,18 @@
       "id": "llama-rocm10",
       "label": "ROCm 10 (llama.cpp)",
       "kind": "rocm",
-      "version": "b12383",
-      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b12383/llama-b12383-bin-ubuntu-rocm-10.0-x64.tar.gz",
-      "sha256": "d1fcd3e9569919d3f82c4eae38a9268226ad410657bd8bfdfa882be1295b8b01",
-      "size": 271144114,
+      "version": "c56be86",
+      "url": "https://github.com/tibssy/imagiflume/releases/download/backends-llama-c56be86/llama-c56be86-linux-x64-rocm10.tar.gz",
+      "sha256": "e17344b55848d3acf6d59cc204002cc381f077af61d06afb5c954bdf20d6950b",
+      "size": 91889439,
       "binary": "llama-cli",
       "archive": "tar-gz",
       "rocm_major": 10,
       "requires": [
-        "libamdhip64.so.10",
-        "libssl.so.3"
+        "libamdhip64.so.7"
       ],
-      "notes": "AMD GPUs only. Large download; requires a compatible ROCm runtime."
+      "notes": "AMD GPUs only. Large download; requires a compatible ROCm runtime.",
+      "min_glibc": "2.34"
     },
     {
       "id": "llama-cuda12",

@@ -20,10 +20,10 @@ rough edges.
   deleting one in Preferences.
 - **Queue**: the queue expander is hosted in a list box, so Adwaita no longer
   warns that an `AdwExpanderRow` was placed into a `GtkBox`.
-- **llama.cpp plumbing**: the CPU and Vulkan helpers are now static
-  `LLAMA_OPENSSL=OFF` builds, so they no longer require `libssl` on minimal
-  distros. The ROCm/CUDA helpers still declare `libssl.so.3`, and a prompt
-  improvement failure adds the package hint (`openssl-libs` / `libssl3`).
+- **llama.cpp plumbing**: all helpers (CPU, Vulkan, ROCm 10, CUDA 12 and
+  CUDA 13) are now static `LLAMA_OPENSSL=OFF` builds, so none of them requires
+  `libssl` on minimal distros. Prompt-improvement failures still add the
+  OpenSSL package hint for any custom helper that needs it.
 - **History filter icon**: falls back to `view-list-symbolic` when the icon
   theme has no `view-filter-symbolic`, avoiding the broken-image icon on some
   distros.
