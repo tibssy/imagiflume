@@ -308,7 +308,7 @@ impl HardwareProfile {
                 .or_else(|| nvml.as_ref().map(|info| info.gpu.clone()))
                 .or_else(detect_nvidia_sysfs),
             amd: detect_amd(),
-            vulkan: has_library("libvulkan.so.1"),
+            vulkan: has_library("libvulkan.so.1") && has_vulkan_driver(),
             cuda_majors: detect_cuda_majors(),
             cuda_driver: nvml.as_ref().and_then(|info| info.cuda_driver),
             glibc: detect_glibc(),
@@ -331,6 +331,8 @@ impl HardwareProfile {
             BackendKind::Vulkan => {
                 if self.vulkan {
                     None
+                } else if has_library("libvulkan.so.1") {
+                    Some("No Vulkan driver (ICD) installed".into())
                 } else {
                     Some("Vulkan loader (libvulkan.so.1) not found".into())
                 }
@@ -781,6 +783,45 @@ fn detect_amd() -> bool {
     detect_amd_in(Path::new("/sys/class/drm"))
 }
 
+/// A Vulkan loader alone is not enough: a VM can have `libvulkan.so.1` with no
+/// driver installed, and `sd-server` then fails with "No devices found".
+/// Require at least one ICD manifest (or an explicit override).
+fn has_vulkan_driver() -> bool {
+    if ["VK_ICD_FILENAMES", "VK_DRIVER_FILES"]
+        .iter()
+        .any(|key| std::env::var_os(key).is_some_and(|value| !value.is_empty()))
+    {
+        return true;
+    }
+    let mut dirs = vec![
+        PathBuf::from("/usr/share/vulkan/icd.d"),
+        PathBuf::from("/etc/vulkan/icd.d"),
+    ];
+    match std::env::var_os("XDG_DATA_DIRS") {
+        Some(value) => {
+            dirs.extend(std::env::split_paths(&value).map(|dir| dir.join("vulkan/icd.d")));
+        }
+        None => dirs.push(PathBuf::from("/usr/local/share/vulkan/icd.d")),
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        dirs.push(PathBuf::from(home).join(".local/share/vulkan/icd.d"));
+    }
+    has_vulkan_driver_in(&dirs)
+}
+
+fn has_vulkan_driver_in(dirs: &[PathBuf]) -> bool {
+    dirs.iter().any(|dir| {
+        std::fs::read_dir(dir).is_ok_and(|entries| {
+            entries.flatten().any(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .is_some_and(|extension| extension == "json")
+            })
+        })
+    })
+}
+
 fn detect_amd_in(root: &Path) -> bool {
     let Ok(entries) = std::fs::read_dir(root) else {
         return false;
@@ -1089,6 +1130,20 @@ GPU UUID: \t GPU-250c6a35
         std::fs::create_dir_all(&amd).unwrap();
         std::fs::write(amd.join("vendor"), "0x1002\n").unwrap();
         assert!(detect_amd_in(&dir));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn requires_a_vulkan_icd_manifest() {
+        let dir = std::env::temp_dir().join(format!("flux-vulkan-icd-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        assert!(!has_vulkan_driver_in(std::slice::from_ref(&dir)));
+
+        std::fs::write(dir.join("test_icd.x86_64.json"), "{}").unwrap();
+        assert!(has_vulkan_driver_in(std::slice::from_ref(&dir)));
 
         let _ = std::fs::remove_dir_all(dir);
     }

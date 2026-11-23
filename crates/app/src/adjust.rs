@@ -16,8 +16,8 @@ use imagiflume_core::adjust::Adjustments;
 use crate::history::{Generation, NewGeneration};
 use crate::rounded_paintable::RoundedPaintable;
 use crate::{
-    Ui, active_preset, annotate_image, fade_to_image, history_view, now_millis, reload_history,
-    slugify, unix_seconds, write_thumbnail,
+    Ui, active_preset, annotate_image, fade_to_image, history_view, naming, reload_history,
+    unix_seconds, write_thumbnail,
 };
 
 /// Decoded source pixels plus the texture that was on screen before previewing.
@@ -295,15 +295,16 @@ fn save_adjusted(ui: &Rc<Ui>, preview: &Preview, adjustments: Adjustments, popov
         return;
     };
 
+    let suffix = naming::capitalize_first(&adjustments.summary());
+    let title = naming::derived(ui, &preview.source, &suffix);
     let output_dir = ui.config.borrow().output_dir.clone();
-    let stem = preview
-        .source
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .map(slugify)
-        .filter(|stem| !stem.is_empty())
-        .unwrap_or_else(|| "image".into());
-    let output = output_dir.join(format!("{stem}-adjusted-{}.png", now_millis()));
+    if let Err(error) = std::fs::create_dir_all(&output_dir) {
+        tracing::error!(%error, path = %output_dir.display(), "failed to create the output folder");
+        ui.toast
+            .add_toast(adw::Toast::new("Could not save the copy."));
+        return;
+    }
+    let output = naming::unique_output_path(&output_dir, &title);
     if let Err(error) = image.save(&output) {
         tracing::error!(%error, path = %output.display(), "failed to save adjustment");
         ui.toast
@@ -324,6 +325,7 @@ fn save_adjusted(ui: &Rc<Ui>, preview: &Preview, adjustments: Adjustments, popov
 
     let inserted = ui.history.borrow().insert(&NewGeneration {
         prompt: &prompt,
+        title: &title,
         model: &model,
         style: "none",
         width,
@@ -347,6 +349,7 @@ fn save_adjusted(ui: &Rc<Ui>, preview: &Preview, adjustments: Adjustments, popov
             let entry = Generation {
                 id,
                 prompt: prompt.clone(),
+                title,
                 model,
                 style: "none".into(),
                 width,

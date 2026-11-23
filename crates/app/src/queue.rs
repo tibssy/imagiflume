@@ -41,6 +41,8 @@ pub(crate) struct GenerateJob {
     /// Seed field contents when the job was queued, so completion only writes
     /// the used seed back if the user has not typed a new one meanwhile.
     pub seed_text: String,
+    /// Title run started when a text-to-image job was queued.
+    pub title_task: Option<async_channel::Receiver<Result<String, String>>>,
 }
 
 /// Where an upscale job gets its input.
@@ -425,6 +427,7 @@ mod tests {
                 reference_paths: Vec::new(),
                 source_path: None,
                 seed_text: String::new(),
+                title_task: None,
             }),
             temp_dir: None,
         }

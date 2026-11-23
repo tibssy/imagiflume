@@ -5,6 +5,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk::glib;
 use imagiflume_core::preset::{ModelFileSpec, ModelPreset, PRESETS};
+use imagiflume_core::runtime::HardwareProfile;
 use imagiflume_core::upscaler::{UPSCALERS, UpscalerPreset};
 use imagiflume_core::vision::{VISION_HELPER, VisionHelper};
 
@@ -464,6 +465,7 @@ fn show_preferences_inner(ui: &Rc<Ui>, focus_models: bool) {
     let refresh_upscalers: Rc<dyn Fn()> = {
         let rows = upscaler_rows.clone();
         let models_dir = ui.models_dir.clone();
+        let ui = ui.clone();
         Rc::new(move || {
             for entry in rows.borrow().iter() {
                 let installed = entry.preset.is_installed(&models_dir);
@@ -475,6 +477,7 @@ fn show_preferences_inner(ui: &Rc<Ui>, focus_models: bool) {
                 entry.delete_button.set_visible(installed);
                 entry.delete_button.set_sensitive(installed);
             }
+            crate::update_image_actions(&ui);
         })
     };
     refresh_upscalers();
@@ -667,6 +670,73 @@ fn show_preferences_inner(ui: &Rc<Ui>, focus_models: bool) {
             .build(),
     );
     about.add(&runtime_group);
+
+    let diagnostics_group = adw::PreferencesGroup::builder()
+        .title("Diagnostics")
+        .description("Include this when reporting a problem.")
+        .build();
+    diagnostics_group.add(
+        &adw::ActionRow::builder()
+            .title("Detected hardware")
+            .subtitle(HardwareProfile::detect().summary())
+            .build(),
+    );
+
+    let log_path = imagiflume_core::paths::cache_dir().join("sd-server.log");
+    let log_row = adw::ActionRow::builder()
+        .title("Backend log")
+        .subtitle(log_path.display().to_string())
+        .build();
+    let open_log = gtk::Button::builder()
+        .icon_name("document-open-symbolic")
+        .tooltip_text("Open the backend log")
+        .valign(gtk::Align::Center)
+        .css_classes(["flat"])
+        .build();
+    {
+        let log_path = log_path.clone();
+        open_log.connect_clicked(move |_| open_path(&log_path));
+    }
+    log_row.add_suffix(&open_log);
+    diagnostics_group.add(&log_row);
+
+    let helper_log = crate::prompt_ai::log_path();
+    let helper_log_row = adw::ActionRow::builder()
+        .title("Prompt helper log")
+        .subtitle(helper_log.display().to_string())
+        .build();
+    let open_helper_log = gtk::Button::builder()
+        .icon_name("document-open-symbolic")
+        .tooltip_text("Open the llama.cpp log")
+        .valign(gtk::Align::Center)
+        .css_classes(["flat"])
+        .build();
+    {
+        let helper_log = helper_log.clone();
+        open_helper_log.connect_clicked(move |_| open_path(&helper_log));
+    }
+    helper_log_row.add_suffix(&open_helper_log);
+    diagnostics_group.add(&helper_log_row);
+
+    let copy_row = adw::ActionRow::builder()
+        .title("Copy diagnostics")
+        .subtitle("Version, backend, hardware, paths and locale")
+        .build();
+    let copy_button = gtk::Button::builder()
+        .label("Copy")
+        .valign(gtk::Align::Center)
+        .css_classes(["flat"])
+        .build();
+    {
+        let ui = ui.clone();
+        copy_button.connect_clicked(move |_| {
+            ui.window.clipboard().set_text(&diagnostics_text(&ui));
+            ui.toast.add_toast(adw::Toast::new("Diagnostics copied."));
+        });
+    }
+    copy_row.add_suffix(&copy_button);
+    diagnostics_group.add(&copy_row);
+    about.add(&diagnostics_group);
 
     let project_group = adw::PreferencesGroup::builder().title("Project").build();
     project_group.add(&link_row(
@@ -1169,6 +1239,84 @@ fn open_uri(uri: &str) {
             }
         },
     );
+}
+
+fn open_path(path: &Path) {
+    if !path.is_file() {
+        tracing::warn!(path = %path.display(), "cannot open missing file");
+        return;
+    }
+    open_uri(&gtk::gio::File::for_path(path).uri());
+}
+
+/// Plain-text environment summary for bug reports.
+fn diagnostics_text(ui: &Ui) -> String {
+    use std::fmt::Write as _;
+
+    let config = ui.config.borrow();
+    let locale = std::env::var("LC_ALL")
+        .or_else(|_| std::env::var("LC_MESSAGES"))
+        .or_else(|_| std::env::var("LANG"))
+        .unwrap_or_else(|_| "unknown".into());
+    let server = config
+        .sd_server
+        .as_ref()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "auto-detected".into());
+    let prompt_helper = crate::prompt_ai::find_cli(&config)
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "not found".into());
+
+    let mut text = String::new();
+    let _ = writeln!(
+        text,
+        "{} {}",
+        imagiflume_core::APP_NAME,
+        env!("CARGO_PKG_VERSION")
+    );
+    let _ = writeln!(
+        text,
+        "Channel: {}",
+        if crate::backends::in_flatpak() {
+            "Flatpak"
+        } else {
+            "Native"
+        }
+    );
+    let _ = writeln!(text, "Locale: {locale}");
+    let _ = writeln!(text, "GPU: {}", HardwareProfile::detect().summary());
+    let _ = writeln!(
+        text,
+        "Backend: stable-diffusion.cpp · {}",
+        config.backend.as_deref().unwrap_or("auto")
+    );
+    let _ = writeln!(
+        text,
+        "Backend id: {}",
+        config.backend_id.as_deref().unwrap_or("system")
+    );
+    let _ = writeln!(text, "Server: {server}");
+    let _ = writeln!(text, "Prompt helper: {prompt_helper}");
+    let _ = writeln!(text, "Models: {}", config.models_dir.display());
+    let _ = writeln!(text, "Output: {}", config.output_dir.display());
+    let _ = writeln!(
+        text,
+        "History: {}",
+        imagiflume_core::paths::history_db().display()
+    );
+    let _ = writeln!(
+        text,
+        "Log: {}",
+        imagiflume_core::paths::cache_dir()
+            .join("sd-server.log")
+            .display()
+    );
+    let _ = writeln!(
+        text,
+        "Prompt helper log: {}",
+        crate::prompt_ai::log_path().display()
+    );
+    text
 }
 
 fn confirm_license(

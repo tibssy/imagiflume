@@ -22,16 +22,25 @@ pub(crate) struct MainView {
     pub queue_status: gtk::Label,
     /// Floating queue indicator when the sidebar is hidden.
     pub queue_bubble: gtk::Button,
-    pub queue_bubble_spinner: gtk::Spinner,
+    pub queue_bubble_spinner: crate::spinner::Spinner,
     pub queue_bubble_label: gtk::Label,
     pub cancel: gtk::Button,
     pub status: gtk::Label,
+    /// Currently selected inference backends, shown at the bottom right.
+    pub backend_status: gtk::Label,
     pub crop_overlay: gtk::DrawingArea,
     pub zoom_overlay: gtk::DrawingArea,
     pub edit_button: gtk::Button,
     pub upscale_button: gtk::Button,
     pub variation_button: gtk::Button,
     pub adjust_button: gtk::Button,
+    pub transform_button: gtk::MenuButton,
+    pub transform_popover: gtk::Popover,
+    pub transform_apply_button: gtk::Button,
+    pub rotate_left_button: gtk::Button,
+    pub rotate_right_button: gtk::Button,
+    pub flip_horizontal_button: gtk::Button,
+    pub flip_vertical_button: gtk::Button,
     /// Returns from a history image to the running job's live preview.
     pub live_button: gtk::Button,
     pub zoom_scroller: gtk::ScrolledWindow,
@@ -148,6 +157,53 @@ pub(crate) fn build() -> MainView {
         .visible(false)
         .css_classes(["osd", "circular"])
         .build();
+    let rotate_left_button = gtk::Button::builder()
+        .icon_name("object-rotate-left-symbolic")
+        .tooltip_text("Rotate 90° left")
+        .css_classes(["flat", "circular"])
+        .build();
+    let rotate_right_button = gtk::Button::builder()
+        .icon_name("object-rotate-right-symbolic")
+        .tooltip_text("Rotate 90° right")
+        .css_classes(["flat", "circular"])
+        .build();
+    let flip_horizontal_button = gtk::Button::builder()
+        .icon_name("object-flip-horizontal-symbolic")
+        .tooltip_text("Flip horizontally")
+        .css_classes(["flat", "circular"])
+        .build();
+    let flip_vertical_button = gtk::Button::builder()
+        .icon_name("object-flip-vertical-symbolic")
+        .tooltip_text("Flip vertically")
+        .css_classes(["flat", "circular"])
+        .build();
+    let transform_apply_button = gtk::Button::builder()
+        .icon_name("object-select-symbolic")
+        .tooltip_text("Apply the transform")
+        .sensitive(false)
+        .css_classes(["suggested-action", "circular"])
+        .build();
+    let transform_box = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    transform_box.set_margin_top(8);
+    transform_box.set_margin_bottom(8);
+    transform_box.set_margin_start(8);
+    transform_box.set_margin_end(8);
+    transform_box.append(&rotate_left_button);
+    transform_box.append(&rotate_right_button);
+    transform_box.append(&flip_horizontal_button);
+    transform_box.append(&flip_vertical_button);
+    transform_box.append(&gtk::Separator::new(gtk::Orientation::Vertical));
+    transform_box.append(&transform_apply_button);
+    let transform_popover = gtk::Popover::new();
+    transform_popover.set_child(Some(&transform_box));
+    let transform_button = gtk::MenuButton::builder()
+        .icon_name("object-rotate-right-symbolic")
+        .tooltip_text("Rotate or flip the image")
+        .always_show_arrow(false)
+        .visible(false)
+        .css_classes(["osd", "circular"])
+        .build();
+    transform_button.set_popover(Some(&transform_popover));
     let live_button = gtk::Button::builder()
         .icon_name("view-reveal-symbolic")
         .tooltip_text("Show the running job's live preview")
@@ -340,6 +396,7 @@ pub(crate) fn build() -> MainView {
     image_actions.append(&effects_button);
     image_actions.append(&save_effect_button);
     image_actions.append(&adjust_button);
+    image_actions.append(&transform_button);
     image_actions.append(&upscale_button);
     image_actions.append(&variation_button);
     image_actions.append(&edit_button);
@@ -386,12 +443,11 @@ pub(crate) fn build() -> MainView {
         .tooltip_text("Fit to window")
         .css_classes(["flat", "circular"])
         .build();
-    let queue_bubble_spinner = gtk::Spinner::new();
-    queue_bubble_spinner.set_size_request(14, 14);
+    let queue_bubble_spinner = crate::spinner::Spinner::new(14);
     queue_bubble_spinner.set_visible(false);
     let queue_bubble_label = gtk::Label::builder().css_classes(["caption"]).build();
     let queue_bubble_content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    queue_bubble_content.append(&queue_bubble_spinner);
+    queue_bubble_content.append(&queue_bubble_spinner.widget);
     queue_bubble_content.append(&queue_bubble_label);
     let queue_bubble = gtk::Button::builder()
         .child(&queue_bubble_content)
@@ -567,9 +623,19 @@ pub(crate) fn build() -> MainView {
     let status = gtk::Label::builder()
         .label("Ready")
         .xalign(0.0)
+        .hexpand(true)
         .ellipsize(gtk::pango::EllipsizeMode::End)
         .css_classes(["caption", "dim-label"])
         .build();
+    let backend_status = gtk::Label::builder()
+        .xalign(1.0)
+        .halign(gtk::Align::End)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .css_classes(["caption", "dim-label"])
+        .build();
+    let status_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    status_row.append(&status);
+    status_row.append(&backend_status);
 
     let bottom = gtk::Box::new(gtk::Orientation::Vertical, 8);
     bottom.set_margin_top(12);
@@ -578,7 +644,7 @@ pub(crate) fn build() -> MainView {
     bottom.set_margin_end(12);
     bottom.append(&progress_row);
     bottom.append(&composer);
-    bottom.append(&status);
+    bottom.append(&status_row);
 
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
     root.append(&reference_strip);
@@ -609,9 +675,17 @@ pub(crate) fn build() -> MainView {
         queue_bubble_label,
         cancel,
         status,
+        backend_status,
         crop_overlay,
         zoom_overlay,
         adjust_button,
+        transform_button,
+        transform_popover,
+        transform_apply_button,
+        rotate_left_button,
+        rotate_right_button,
+        flip_horizontal_button,
+        flip_vertical_button,
         zoom_scroller: scroller,
         zoom_controls,
         zoom_out_button,

@@ -6,6 +6,12 @@ use imagiflume_core::size::RatioMatch;
 use imagiflume_core::style::STYLES;
 use imagiflume_core::{Config, size};
 
+/// Whether the current icon theme provides `name`.
+fn has_theme_icon(name: &str) -> bool {
+    gtk::gdk::Display::default()
+        .is_some_and(|display| gtk::IconTheme::for_display(&display).has_icon(name))
+}
+
 pub(crate) struct Sidebar {
     pub root: gtk::Box,
     pub model_dropdown: gtk::DropDown,
@@ -347,8 +353,15 @@ pub(crate) fn build(
         history_filter_buttons.push(check);
     }
     let filter_popover = gtk::Popover::builder().child(&filter_box).build();
+    // `view-filter-symbolic` is not in Adwaita, so some distros show a broken
+    // image. Fall back to a guaranteed Adwaita icon when the theme lacks it.
+    let filter_icon = if has_theme_icon("view-filter-symbolic") {
+        "view-filter-symbolic"
+    } else {
+        "view-list-symbolic"
+    };
     let history_filter_button = gtk::MenuButton::builder()
-        .icon_name("view-filter-symbolic")
+        .icon_name(filter_icon)
         .tooltip_text("Filter history: All images")
         .popover(&filter_popover)
         .css_classes(["flat"])
@@ -443,6 +456,7 @@ pub(crate) fn build(
         .subtitle_lines(1)
         .expanded(false)
         .build();
+    queue_expander.add_css_class("queue-row");
     let queue_clear = gtk::Button::builder()
         .icon_name("edit-clear-symbolic")
         .tooltip_text("Remove all waiting jobs")
@@ -466,13 +480,14 @@ pub(crate) fn build(
 
     let queue_list = gtk::ListBox::builder()
         .selection_mode(gtk::SelectionMode::None)
-        .css_classes(["navigation-sidebar"])
+        .css_classes(["navigation-sidebar", "queue-list"])
         .build();
     let queue_scroller = gtk::ScrolledWindow::builder()
         .child(&queue_list)
         .propagate_natural_height(true)
         .max_content_height(170)
         .vexpand(false)
+        .css_classes(["queue-scroller"])
         .build();
     queue_expander.add_row(&queue_scroller);
 
@@ -499,10 +514,17 @@ pub(crate) fn build(
 
     let history_separator = gtk::Separator::new(gtk::Orientation::Horizontal);
 
+    // AdwExpanderRow is a GtkListBoxRow and warns when parented to a box.
+    let queue_wrapper = gtk::ListBox::builder()
+        .selection_mode(gtk::SelectionMode::None)
+        .css_classes(["queue-wrapper"])
+        .build();
+    queue_wrapper.append(&queue_expander);
+
     root.append(&setup_title);
     root.append(&setup);
     root.append(&separator);
-    root.append(&queue_expander);
+    root.append(&queue_wrapper);
     root.append(&history_separator);
     root.append(&history_header);
     root.append(&history_search_revealer);

@@ -39,7 +39,7 @@ Milestone 3 (packaged desktop app):
   newest image is the group header, older iterations expand below it, and the
   original sits at the bottom marked **first**. The **Select** button switches
   History to checkboxes for bulk deletion. The search button toggles the
-  search field (`Ctrl+F`), which matches prompts, models and seeds; the filter
+  search field (`Ctrl+F`), which matches prompts, titles, models and seeds; the filter
   button in the History header narrows the list to text-to-image, edits,
   upscales or adjustments; matching chains stay expanded, and a star marks
   **favorites**
@@ -100,6 +100,17 @@ Milestone 3 (packaged desktop app):
 - **manual adjustments** with brightness, contrast and saturation sliders and
   a live canvas preview; saving writes a new PNG that joins the history chain
   without re-running the model
+- **rotate and flip**: the transform menu over the canvas previews 90° left or
+  right rotations and horizontal or vertical flips; the checkmark saves the
+  result. It works on generated images and references. A recorded image joins
+  the history chain, while a cache-only reference is replaced in the reference
+  set
+- **history titles**: after a generation, `llama-cli` writes a short base title
+  when the active model has a usable language encoder; without the helper a
+  short title is derived from the first clause of the prompt. Derived images
+  append a suffix such as `- Upscaled 2x`, `- Rotated +90`,
+  `- Brightness +28` or the effect name, and the PNG file name uses the same
+  title. Imported images keep their file name
 - **batch and variations**: **Batch** in the sidebar queues 1–4 images with
   consecutive seeds, and the shuffle button over the canvas re-runs the
   displayed prompt with seed + 1
@@ -109,9 +120,15 @@ Milestone 3 (packaged desktop app):
 - **prompt history**: the history button in the composer toolbar lists
   saved prompts, and `Alt+Up` / `Alt+Down` recall them while keeping the draft
   you were writing
-- **camera capture**: the camera button in the composer grabs one frame from
-  the first V4L2 device, adds it as a reference and shows it on the canvas;
-  it only appears when a camera and `ffmpeg` are available
+- **camera capture**: the camera button in the composer opens a live preview.
+  The button turns into a capture control; a second press saves the current
+  frame as a reference, shows it on the canvas and releases the camera.
+  **Esc** closes the preview without saving. It uses the XDG camera portal, so
+  the desktop asks for permission the first time and the app can be toggled in
+  **Settings → Privacy & Security → Camera**. The portal session is reused, so
+  consecutive previews do not wait for the camera to reappear. Native sessions
+  without a camera portal fall back to a one-shot V4L2 grab; sandboxed builds
+  always go through the portal
 - **session restore**: optionally reopen the last image and draft prompt on
   launch (**Preferences → General**, on by default)
 - **view-only zoom** with a bottom-right pill: zoom in/out, real-pixel scale
@@ -133,6 +150,21 @@ Milestone 3 (packaged desktop app):
   keeps files shared with other presets
 - first run opens the Models page when the active preset is missing
 - PKGBUILD, `.desktop` entry and scalable icon
+
+### Reliability
+
+The 0.2.0 beta was tested against the three failures that used to strand a job:
+
+- **backend killed mid-job**: the job fails with a clear message, the queue
+  clears, History is unchanged and the next job restarts the server
+- **CUDA out of memory**: the job fails with a size/offload hint, the app stays
+  usable and a smaller job completes
+- **model file removed or changed mid-job**: the job fails cleanly and
+  Preferences marks the missing file
+
+Failed jobs never leave a broken History entry. Verified on an 8 GB Quadro
+M4000 with CUDA 12; the toast names the reason from the backend log instead of
+a raw HTTP error.
 
 ## Models
 
@@ -285,11 +317,12 @@ without leaving the app.
 | Batch generation | **Batch** spinner in the sidebar (1–4 images) |
 | Generate a variation | shuffle button over the canvas (seed + 1) |
 | Compare with the source | split button over the canvas |
+| Rotate or flip | transform menu over the canvas |
 | Pause / resume the queue | pause button in the **Queue** header |
 | Reorder waiting jobs | up/down arrows on a waiting queue row |
 | Duplicate a queued prompt | copy button on a waiting queue row |
 | Recall a previous prompt | history button in the composer, or `Alt+Up` / `Alt+Down` |
-| Take a photo | camera button in the composer (needs a camera and `ffmpeg`) |
+| Take a photo | camera button in the composer: first press previews, second captures (asks for permission on first use) |
 | Choose LoRAs | **LoRAs…** in the sidebar |
 | Improve the prompt | ✨ button in the prompt field (needs `llama-cli`) |
 | New random seed | shuffle button next to the seed field |
@@ -445,6 +478,10 @@ Data locations:
 cargo run --release
 ```
 
+Camera capture uses GStreamer: install `gstreamer`, `gst-plugins-base`,
+`gst-plugins-good` and `gst-plugin-pipewire` (names vary by distro), or use the
+Flatpak build.
+
 The app also downloads models itself: **Preferences → Models**, or on first run
 when no model is installed. Only installed presets appear in the sidebar
 selector; missing ones can be downloaded or removed from the Models tab.
@@ -557,17 +594,12 @@ backends or install the Vulkan backend from Preferences.
 The package builds the CUDA backend for Maxwell by default:
 
 ```bash
-# build a source tarball from this checkout (vendor/, models/ and build
-# artifacts are not shipped)
-tar --transform 's,^,imagiflume-0.1.0/,' -czf packaging/imagiflume-0.1.0.tar.gz \
-    Cargo.toml Cargo.lock LICENSE README.md .gitignore crates scripts \
-    packaging/PKGBUILD packaging/io.github.tibssy.Imagiflume.desktop \
-    packaging/io.github.tibssy.Imagiflume.svg \
-    packaging/io.github.tibssy.Imagiflume.metainfo.xml
-
 cd packaging
 IMAGIFLUME_CUDA_ARCH=52 makepkg -si
 ```
+
+The PKGBUILD fetches the release source archive; build artifacts, `vendor/`
+and `models/` are not shipped.
 
 The installed binary discovers a backend in this order: `IMAGIFLUME_SD_SERVER`,
 `sd_server` in the config, a sibling of `sd_cli`, a server next to the app
@@ -609,9 +641,12 @@ next.
 
 The GitHub alpha binaries are built on Debian 13 (trixie) in CI with GTK 4.18
 and libadwaita 1.7. The app binary is not bundled with its toolkit: it needs a
-host with **GTK 4.16+, libadwaita 1.6+ and glibc 2.39+** (Debian 13, Ubuntu
-24.04 or newer). A local `cargo build --release` instead matches your own
-distro's GTK stack, so it will not run on older releases than that distro.
+host with **GTK 4.16+, libadwaita 1.6+, GStreamer 1.20+ and glibc 2.39+**
+(Debian 13, Ubuntu 24.04 or newer). Camera capture additionally needs the
+PipeWire GStreamer plugin (`gst-plugin-pipewire`, `pipewire-gstreamer` or
+`gstreamer1.0-pipewire`, depending on the distro). A local
+`cargo build --release` instead matches your own distro's GTK stack, so it will
+not run on older releases than that distro.
 
 The backend archives are self-contained; the app binary is not. If a distro
 reports a missing library, check:
@@ -638,6 +673,22 @@ binary will always depend on the host GTK stack.
   not change GPU sampling time.
 - Avoid models whose text encoder alone exceeds ~8 GB (FLUX.2 dev, Krea2 Q4,
   Qwen-Image-2.1, MOSS-Image): they run, but swap and take 10+ minutes.
+
+## Known issues
+
+- **Mask inpainting and outpainting are not available.** FLUX.1 Fill needs
+  roughly 10 GB of non-commercial weights and is too slow on 8 GB cards; the
+  implementation is preserved on the `tier3-inpaint` branch.
+- **Only the curated model presets are supported.** Arbitrary user-supplied
+  Hugging Face models are planned after beta.
+- **LoRAs are session-only.** They are cleared when the model changes and are
+  never restored on launch.
+- **AppImage is not published yet.** Use the Flatpak (or the Arch PKGBUILD for
+  native installs).
+- **3D object generation is not part of beta.**
+- If a run fails or a backend misbehaves, **Preferences → About → Diagnostics**
+  shows the detected hardware, the backend log path, and a **Copy diagnostics**
+  button for bug reports.
 
 ## Roadmap
 

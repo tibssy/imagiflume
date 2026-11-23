@@ -26,9 +26,10 @@ finish-args:
   - --socket=wayland
   - --socket=fallback-x11
   - --share=ipc
-  # GPU inference. `all` is needed for CUDA devices, not just rendering.
+  # GPU inference. `dri` also exposes /dev/nvidia* and /dev/kfd, so CUDA and
+  # ROCm do not need the broad `all` device permission. Camera access goes
+  # through the XDG camera portal instead of the raw /dev/video* nodes.
   - --device=dri
-  - --device=all
   # Default output folder and images opened from disk.
   - --filesystem=xdg-pictures
   - --filesystem=xdg-download

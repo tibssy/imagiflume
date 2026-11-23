@@ -1,11 +1,13 @@
 mod adjust;
 mod backends;
+mod camera;
 mod compare_view;
 mod effects;
 mod history;
 mod history_view;
 mod lora;
 mod main_view;
+mod naming;
 mod preferences;
 mod prompt_ai;
 mod queue;
@@ -13,7 +15,9 @@ mod queue_view;
 mod rounded_clip;
 mod rounded_paintable;
 mod sidebar;
+mod spinner;
 mod state;
+mod transform;
 mod upscale_dialog;
 
 use std::cell::{Cell, RefCell};
@@ -82,6 +86,8 @@ pub(crate) struct Ui {
     pub progress: gtk::ProgressBar,
     pub progress_row: gtk::Box,
     pub status: gtk::Label,
+    /// Currently selected inference backends, shown at the bottom right.
+    pub backend_status: gtk::Label,
     pub composer: gtk::Revealer,
     pub crop_overlay: gtk::DrawingArea,
     pub zoom_overlay: gtk::DrawingArea,
@@ -93,6 +99,14 @@ pub(crate) struct Ui {
     pub upscale_button: gtk::Button,
     pub variation_button: gtk::Button,
     pub adjust_button: gtk::Button,
+    pub transform_button: gtk::MenuButton,
+    pub transform_popover: gtk::Popover,
+    pub transform_apply_button: gtk::Button,
+    pub transform_preview: RefCell<Option<transform::Preview>>,
+    pub rotate_left_button: gtk::Button,
+    pub rotate_right_button: gtk::Button,
+    pub flip_horizontal_button: gtk::Button,
+    pub flip_vertical_button: gtk::Button,
     /// View zoom factor, 1.0 being fit-to-window.
     pub zoom: Cell<f64>,
     /// Running zoom animation, if any.
@@ -139,6 +153,7 @@ pub(crate) struct Ui {
     pub reference_button: gtk::Button,
     pub camera_button: gtk::Button,
     pub camera_busy: Cell<bool>,
+    pub camera_preview: RefCell<Option<camera::Preview>>,
     pub improve_button: gtk::Button,
     pub improving: Cell<bool>,
     /// Position while browsing prompt history; `None` is the live draft.
@@ -169,7 +184,7 @@ pub(crate) struct Ui {
     pub queue_status: gtk::Label,
     /// Floating indicator for the queue when the sidebar is hidden.
     pub queue_bubble: gtk::Button,
-    pub queue_bubble_spinner: gtk::Spinner,
+    pub queue_bubble_spinner: crate::spinner::Spinner,
     pub queue_bubble_label: gtk::Label,
     /// Set once the user confirmed quitting with jobs still queued.
     pub quitting: Cell<bool>,
@@ -333,6 +348,40 @@ fn install_styles() {
          }
          .filter-active {
              color: @accent_color;
+         }
+         .queue-wrapper,
+         .queue-scroller,
+         .queue-list {
+             background: none;
+         }
+         /* The queue mirrors the tinted, rounded block of an expanded history
+            chain instead of Adwaita's darker expander content shade. */
+         row.expander.queue-row,
+         row.expander.queue-row:hover,
+         row.expander.queue-row:selected {
+             background: none;
+         }
+         row.expander.queue-row list.nested,
+         row.expander.queue-row list.nested > row,
+         row.expander.queue-row list.nested > row:hover {
+             background: none;
+         }
+         row.expander.queue-row list.nested > row {
+             border-bottom: none;
+         }
+         row.expander.queue-row:checked,
+         row.expander.queue-row:checked:hover,
+         row.expander.queue-row:checked:selected {
+             background-color: alpha(@accent_bg_color, 0.1);
+             border-radius: 12px;
+         }
+         row.expander.queue-row > box > list > row.header:hover {
+             background-color: alpha(@view_fg_color, 0.07);
+             border-radius: 9px;
+         }
+         row.expander.queue-row:selected > box > list > row.header {
+             background-color: alpha(@view_fg_color, 0.1);
+             border-radius: 9px;
          }
          .queue-bubble {
              background-image: none;
@@ -516,11 +565,17 @@ fn build_ui(app: &adw::Application) {
         backend: config.backend.clone(),
     }));
 
-    let history = match History::open(&paths::history_db()) {
-        Ok(history) => history,
+    let (history, history_warning) = match History::open(&paths::history_db()) {
+        Ok(history) => (history, None),
         Err(error) => {
             tracing::error!(%error, "failed to open history database; using memory");
-            History::open_in_memory().expect("in-memory history")
+            (
+                History::open_in_memory().expect("in-memory history"),
+                Some(
+                    "History database could not be opened; this session uses temporary history."
+                        .to_string(),
+                ),
+            )
         }
     };
 
@@ -601,6 +656,7 @@ fn build_ui(app: &adw::Application) {
         progress: view.progress,
         progress_row: view.progress_row,
         status: view.status,
+        backend_status: view.backend_status,
         composer: view.composer,
         crop_overlay: view.crop_overlay,
         zoom_overlay: view.zoom_overlay,
@@ -612,6 +668,14 @@ fn build_ui(app: &adw::Application) {
         upscale_button: view.upscale_button,
         variation_button: view.variation_button,
         adjust_button: view.adjust_button,
+        transform_button: view.transform_button,
+        transform_popover: view.transform_popover,
+        transform_apply_button: view.transform_apply_button,
+        transform_preview: RefCell::new(None),
+        rotate_left_button: view.rotate_left_button,
+        rotate_right_button: view.rotate_right_button,
+        flip_horizontal_button: view.flip_horizontal_button,
+        flip_vertical_button: view.flip_vertical_button,
         zoom: Cell::new(1.0),
         zoom_animation: RefCell::new(None),
         zoom_scroller: view.zoom_scroller,
@@ -653,6 +717,7 @@ fn build_ui(app: &adw::Application) {
         reference_button: view.reference_button,
         camera_button: view.camera_button,
         camera_busy: Cell::new(false),
+        camera_preview: RefCell::new(None),
         improve_button: view.improve_button,
         improving: Cell::new(false),
         prompt_history_index: Cell::new(None),
@@ -792,7 +857,9 @@ fn build_ui(app: &adw::Application) {
         history_view::rebuild(&ui);
     }
     queue_view::rebuild(&ui);
-    ui.camera_button.set_visible(camera_available());
+    camera::init();
+    camera::register_host_app();
+    camera::refresh_availability(&ui);
     restore_session(&ui);
 
     if let Err(error) = ui.config.borrow().save() {
@@ -802,9 +869,13 @@ fn build_ui(app: &adw::Application) {
     update_size_ui(&ui);
     update_image_view(&ui);
     update_queue_bubble(&ui);
+    update_backend_status(&ui);
 
     ui.window.present();
     show_composer(&ui, true);
+    if let Some(warning) = history_warning {
+        ui.toast.add_toast(adw::Toast::new(&warning));
+    }
 
     if ui.models.borrow().is_empty() {
         preferences::show_preferences(&ui, true);
@@ -891,7 +962,7 @@ fn wire_events(ui: &Rc<Ui>, preferences_button: &gtk::Button) {
     {
         let ui = ui.clone();
         let button = ui.camera_button.clone();
-        button.connect_clicked(move |_| capture_camera(&ui));
+        button.connect_clicked(move |_| camera::toggle(&ui));
     }
     {
         let ui = ui.clone();
@@ -1228,6 +1299,44 @@ fn wire_events(ui: &Rc<Ui>, preferences_button: &gtk::Button) {
         let button = ui.adjust_button.clone();
         button.connect_clicked(move |_| adjust::show(&ui));
     }
+    for (button, operation) in [
+        (
+            ui.rotate_left_button.clone(),
+            transform::Transform::RotateLeft,
+        ),
+        (
+            ui.rotate_right_button.clone(),
+            transform::Transform::RotateRight,
+        ),
+        (
+            ui.flip_horizontal_button.clone(),
+            transform::Transform::FlipHorizontal,
+        ),
+        (
+            ui.flip_vertical_button.clone(),
+            transform::Transform::FlipVertical,
+        ),
+    ] {
+        let ui = ui.clone();
+        button.connect_clicked(move |_| transform::preview(&ui, operation));
+    }
+    {
+        let button = ui.transform_apply_button.clone();
+        let ui = ui.clone();
+        button.connect_clicked(move |_| transform::commit(&ui));
+    }
+    {
+        let popover = ui.transform_popover.clone();
+        let ui = ui.clone();
+        popover.connect_show(move |_| {
+            transform::begin(&ui);
+        });
+    }
+    {
+        let popover = ui.transform_popover.clone();
+        let ui = ui.clone();
+        popover.connect_closed(move |_| transform::cancel(&ui));
+    }
     {
         let ui = ui.clone();
         let button = ui.save_effect_button.clone();
@@ -1488,6 +1597,10 @@ fn wire_events(ui: &Rc<Ui>, preferences_button: &gtk::Button) {
         let ui = ui.clone();
         let split = ui.split.clone();
         key_controller.connect_key_pressed(move |_, key, _, state| {
+            if key == gdk::Key::Escape && ui.camera_preview.borrow().is_some() {
+                camera::cancel(&ui);
+                return glib::Propagation::Stop;
+            }
             if key == gdk::Key::Escape && ui.history_selection_mode.get() {
                 exit_selection_mode(&ui);
                 return glib::Propagation::Stop;
@@ -1810,6 +1923,13 @@ fn target_size(ui: &Rc<Ui>) -> (u32, u32) {
     )
 }
 
+/// Refresh the bottom-right summary of the selected backends.
+pub(crate) fn update_backend_status(ui: &Ui) {
+    let summary = backends::active_summary(&ui.config.borrow());
+    ui.backend_status.set_text(&summary);
+    ui.backend_status.set_tooltip_text(Some(&summary));
+}
+
 pub(crate) fn update_size_ui(ui: &Rc<Ui>) {
     if ui.size_guard.get() {
         return;
@@ -1883,6 +2003,15 @@ pub(crate) fn set_size(ui: &Rc<Ui>, width: u32, height: u32) {
     }
     let mp = size::mp_for_size(width, height);
     set_target(ui, mp, (width, height));
+}
+
+/// Point the sidebar at the ratio of an image without changing the MP target.
+pub(crate) fn set_ratio_for_image(ui: &Rc<Ui>, width: u32, height: u32) {
+    if width == 0 || height == 0 {
+        return;
+    }
+    set_ratio_selection(ui, (width, height));
+    update_size_ui(ui);
 }
 
 /// Whether `(width, height)` is just the current target rounded to the grid.
@@ -2113,6 +2242,8 @@ fn crossfade_to_texture(ui: &Rc<Ui>, texture: &gdk::Texture) {
 }
 
 pub(crate) fn update_image_view(ui: &Rc<Ui>) {
+    camera::forget(ui);
+    transform::forget(ui);
     if ui.compare_button.is_active() {
         ui.compare_button.set_active(false);
     }
@@ -2247,6 +2378,8 @@ pub(crate) fn show_composer(ui: &Rc<Ui>, show: bool) {
         ui.crop_button.set_active(false);
         set_crop_mode(ui, false);
         ui.effects_popover.popdown();
+    } else {
+        camera::forget(ui);
     }
     ui.composer.set_reveal_child(show);
     update_image_actions(ui);
@@ -2266,8 +2399,9 @@ pub(crate) fn update_image_actions(ui: &Rc<Ui>) {
     let zooming = ui.zooming.get();
     let classifying = ui.classifying.get();
     let foreground = zooming || classifying;
+    let camera_preview = ui.camera_preview.borrow().is_some();
     let position = history_position(ui);
-    let actions = has_image && !foreground;
+    let actions = has_image && !foreground && !camera_preview;
     let editable = actions && active_preset(ui).supports_edit;
     let navigation = has_image && !editing && !zooming && !classifying;
     // Only a live preview is unstable: a pinned history image stays fully
@@ -2286,6 +2420,7 @@ pub(crate) fn update_image_actions(ui: &Rc<Ui>) {
     ui.daylight_item.set_visible(!vision_ready);
     ui.night_item.set_visible(!vision_ready);
     let upscale_ready = !foreground
+        && !imagiflume_core::upscaler::installed_upscalers(&ui.models_dir).is_empty()
         && (ui.state.borrow().display.is_some()
             || (generating && !upscaling && ui.live_view.get()));
     ui.upscale_button.set_visible(upscale_ready);
@@ -2296,6 +2431,7 @@ pub(crate) fn update_image_actions(ui: &Rc<Ui>) {
                 .is_some_and(|entry| entry.kind == "generate" && !entry.prompt.trim().is_empty()),
     );
     ui.adjust_button.set_visible(actions && stable);
+    ui.transform_button.set_visible(actions && stable);
     ui.live_button
         .set_visible(generating && !upscaling && !ui.live_view.get());
     ui.edit_button.set_visible(editable && !composing);
@@ -2908,7 +3044,14 @@ fn import_image(ui: &Rc<Ui>, path: PathBuf) {
             .add_toast(adw::Toast::new("Could not create the output folder."));
         return;
     }
-    let output = output_dir.join(format!("imported-{}.png", now_millis()));
+    let title: String = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(|stem| stem.trim())
+        .filter(|stem| !stem.is_empty())
+        .map(|stem| stem.chars().take(80).collect())
+        .unwrap_or_else(|| "Imported image".to_string());
+    let output = naming::unique_output_path(&output_dir, &title);
     if let Err(error) = image.save(&output) {
         tracing::error!(%error, path = %output.display(), "failed to save an imported image");
         ui.toast
@@ -2918,15 +3061,9 @@ fn import_image(ui: &Rc<Ui>, path: PathBuf) {
 
     let created_at = unix_seconds();
     let image_text = output.to_string_lossy().into_owned();
-    let title: String = path
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .map(|stem| stem.trim())
-        .filter(|stem| !stem.is_empty())
-        .map(|stem| stem.chars().take(80).collect())
-        .unwrap_or_else(|| "Imported image".to_string());
     let inserted = ui.history.borrow().insert(&NewGeneration {
         prompt: &title,
+        title: &title,
         model: "import",
         style: "none",
         width,
@@ -2949,7 +3086,8 @@ fn import_image(ui: &Rc<Ui>, path: PathBuf) {
             }
             let entry = Generation {
                 id,
-                prompt: title,
+                prompt: title.clone(),
+                title,
                 model: "import".into(),
                 style: "none".into(),
                 width,
@@ -3218,101 +3356,8 @@ fn add_reference_texture(ui: &Rc<Ui>, texture: &gdk::Texture) {
     add_references(ui, vec![path]);
 }
 
-/// First video capture device exposed by the kernel.
-fn camera_device() -> Option<PathBuf> {
-    (0..10)
-        .map(|index| PathBuf::from(format!("/dev/video{index}")))
-        .find(|path| path.exists())
-}
-
-/// Camera capture needs a device and ffmpeg for the V4L2 grab.
-fn camera_available() -> bool {
-    if camera_device().is_none() {
-        return false;
-    }
-    std::process::Command::new("ffmpeg")
-        .arg("-version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
-}
-
-/// Grab one frame from the camera and use it as an edit reference.
-fn capture_camera(ui: &Rc<Ui>) {
-    if ui.camera_busy.replace(true) {
-        return;
-    }
-    let Some(device) = camera_device() else {
-        ui.camera_busy.set(false);
-        return;
-    };
-    ui.camera_button.set_sensitive(false);
-    ui.status.set_text("Taking a photo…");
-
-    let directory = paths::cache_dir().join("camera");
-    if let Err(error) = std::fs::create_dir_all(&directory) {
-        ui.camera_busy.set(false);
-        ui.camera_button.set_sensitive(true);
-        ui.toast.add_toast(adw::Toast::new(&format!(
-            "Could not prepare the camera: {error}"
-        )));
-        return;
-    }
-    let path = directory.join(format!("camera-{}.png", now_millis()));
-    let captured = path.clone();
-    let (sender, receiver) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let result = std::process::Command::new("ffmpeg")
-            .args(["-hide_banner", "-loglevel", "error", "-f", "v4l2", "-i"])
-            .arg(&device)
-            .args(["-frames:v", "1", "-y"])
-            .arg(&captured)
-            .output();
-        let outcome = match result {
-            Ok(output) if output.status.success() && captured.is_file() => Ok(()),
-            Ok(output) => Err(String::from_utf8_lossy(&output.stderr).trim().to_string()),
-            Err(error) => Err(error.to_string()),
-        };
-        let _ = sender.send(outcome);
-    });
-
-    let ui = ui.clone();
-    glib::timeout_add_local(Duration::from_millis(80), move || {
-        match receiver.try_recv() {
-            Ok(Ok(())) => {
-                finish_camera(&ui, Ok(path.clone()));
-                glib::ControlFlow::Break
-            }
-            Ok(Err(error)) => {
-                finish_camera(&ui, Err(error));
-                glib::ControlFlow::Break
-            }
-            Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                finish_camera(&ui, Err("camera capture stopped".into()));
-                glib::ControlFlow::Break
-            }
-        }
-    });
-}
-
-fn finish_camera(ui: &Rc<Ui>, outcome: Result<PathBuf, String>) {
-    ui.camera_busy.set(false);
-    ui.camera_button.set_sensitive(true);
-    match outcome {
-        Ok(path) => add_references(ui, vec![path]),
-        Err(error) => {
-            let short = error.lines().last().unwrap_or(&error).to_string();
-            ui.status.set_text("Camera capture failed");
-            ui.toast
-                .add_toast(adw::Toast::new(&format!("Could not take a photo: {short}")));
-        }
-    }
-}
-
 /// Append picked images to the edit reference set.
-fn add_references(ui: &Rc<Ui>, paths: Vec<PathBuf>) {
+pub(crate) fn add_references(ui: &Rc<Ui>, paths: Vec<PathBuf>) {
     if references_busy(ui) {
         return;
     }
@@ -3525,9 +3570,12 @@ fn improve_prompt(ui: &Rc<Ui>) {
             Ok(Err(error)) => {
                 tracing::warn!(%error, "prompt improvement failed");
                 ui.status.set_text("Prompt helper unavailable");
-                ui.toast.add_toast(adw::Toast::new(&format!(
-                    "Could not improve prompt: {error}"
-                )));
+                let error = error.to_string();
+                let message = match prompt_ai::dependency_hint(&error) {
+                    Some(hint) => format!("Could not improve prompt: {error}. {hint}"),
+                    None => format!("Could not improve prompt: {error}"),
+                };
+                ui.toast.add_toast(adw::Toast::new(&message));
             }
             Err(_) => {
                 ui.status.set_text("Prompt helper unavailable");
@@ -4047,6 +4095,11 @@ fn generate(
                 reference_paths: references.clone(),
                 source_path: source_path.clone(),
                 seed_text: seed_text.clone(),
+                title_task: if references.is_empty() && mode == GenerationMode::Generate {
+                    naming::text_to_image_title_task(ui, model, &base_prompt)
+                } else {
+                    None
+                },
             }),
             temp_dir: reference_dir,
         };
@@ -4120,6 +4173,13 @@ pub(crate) fn duplicate_job(ui: &Rc<Ui>, id: u64) {
             reference_paths: generate.reference_paths.clone(),
             source_path: generate.source_path.clone(),
             seed_text: generate.seed_text.clone(),
+            title_task: if generate.reference_paths.is_empty()
+                && generate.mode == GenerationMode::Generate
+            {
+                naming::text_to_image_title_task(ui, generate.model, &generate.prompt)
+            } else {
+                None
+            },
         }),
         temp_dir: reference_dir,
     };
@@ -4233,6 +4293,9 @@ fn start_generation_job(ui: &Rc<Ui>, job: queue::Job, request: GenerateRequest) 
             .ok()
             .map(|meta| meta.len())
     });
+    let mut title_task = job
+        .generate()
+        .and_then(|generate| generate.title_task.clone());
     let (sender, receiver) = async_channel::unbounded();
     if ui.worker.jobs.send_blocking((request, sender)).is_err() {
         tracing::error!("generation worker is unavailable");
@@ -4294,8 +4357,17 @@ fn start_generation_job(ui: &Rc<Ui>, job: queue::Job, request: GenerateRequest) 
                     break;
                 }
                 Progress::Done(path) => {
+                    let title = match job.generate() {
+                        Some(generate) if generate.reference_paths.is_empty() => {
+                            let fallback = naming::fallback_title(&generate.prompt);
+                            naming::await_title(title_task.take(), fallback).await
+                        }
+                        Some(generate) => naming::generation_title(&ui, generate),
+                        None => String::new(),
+                    };
+                    let path = naming::rename_to_title(&path, &title);
                     let duration_ms = started.elapsed().as_millis() as i64;
-                    complete_job(&ui, &job, Outcome::Done(path), duration_ms);
+                    complete_job(&ui, &job, Outcome::Done(path, title), duration_ms);
                     finished = true;
                     break;
                 }
@@ -4304,6 +4376,19 @@ fn start_generation_job(ui: &Rc<Ui>, job: queue::Job, request: GenerateRequest) 
                     complete_job(&ui, &job, Outcome::Failed(error), duration_ms);
                     finished = true;
                     break;
+                }
+                Progress::Fallback(message) => {
+                    {
+                        // The session now runs on automatic device selection,
+                        // so the status bar must not keep claiming the failed
+                        // backend. Do not persist this; the saved config is
+                        // still the user's choice for the next launch.
+                        let mut config = ui.config.borrow_mut();
+                        config.backend = None;
+                        config.backend_id = None;
+                    }
+                    update_backend_status(&ui);
+                    ui.toast.add_toast(adw::Toast::new(&message));
                 }
             }
         }
@@ -4371,7 +4456,7 @@ fn start_upscale_job(ui: &Rc<Ui>, job: queue::Job) {
 }
 
 enum Outcome {
-    Done(PathBuf),
+    Done(PathBuf, String),
     Failed(String),
     Cancelled,
 }
@@ -4389,7 +4474,7 @@ fn complete_job(ui: &Rc<Ui>, job: &queue::Job, outcome: Outcome, duration_ms: i6
     }
 
     match outcome {
-        Outcome::Done(path) => {
+        Outcome::Done(path, title) => {
             let image_path = path.to_string_lossy().into_owned();
             let follow_live = ui.live_view.get();
 
@@ -4420,7 +4505,8 @@ fn complete_job(ui: &Rc<Ui>, job: &queue::Job, outcome: Outcome, duration_ms: i6
                 update_image_actions(ui);
             }
 
-            let history_id = record_history(ui, generate, &image_path, duration_ms, follow_live);
+            let history_id =
+                record_history(ui, generate, &image_path, &title, duration_ms, follow_live);
             copy_result_to_clipboard(ui, &path);
             // Do not overwrite the seed field while more jobs are waiting: it
             // belongs to the next composition, not to this result.
@@ -4545,6 +4631,7 @@ fn record_upscale(
     ui: &Rc<Ui>,
     job: &queue::Job,
     image: &UpscaledImage,
+    title: &str,
     duration_ms: i64,
     follow_live: bool,
 ) -> Option<i64> {
@@ -4557,6 +4644,7 @@ fn record_upscale(
 
     let inserted = ui.history.borrow().insert(&NewGeneration {
         prompt: &prompt,
+        title,
         model: model_id,
         style: "none",
         width: image.width,
@@ -4580,6 +4668,7 @@ fn record_upscale(
             let entry = Generation {
                 id,
                 prompt: prompt.clone(),
+                title: title.to_string(),
                 model: model_id.to_string(),
                 style: "none".into(),
                 width: image.width,
@@ -4627,9 +4716,19 @@ fn complete_upscale(
 
     match result {
         Ok(image) => {
+            let mut image = image;
+            let suffix = format!("Upscaled {}x", upscale.factor);
+            let source = upscale
+                .source_path
+                .as_deref()
+                .map(Path::new)
+                .unwrap_or_else(|| Path::new(""));
+            let title = naming::derived(ui, source, &suffix);
+            image.path = naming::rename_to_title(&image.path, &title);
+
             let follow_live = ui.live_view.get();
             ui.undo.borrow_mut().clear();
-            let history_id = record_upscale(ui, job, &image, duration_ms, follow_live);
+            let history_id = record_upscale(ui, job, &image, &title, duration_ms, follow_live);
             copy_result_to_clipboard(ui, &image.path);
             ui.toast.add_toast(adw::Toast::new(&format!(
                 "Upscaled to {} × {}.",
@@ -4692,6 +4791,7 @@ fn record_history(
     ui: &Rc<Ui>,
     generate: &queue::GenerateJob,
     image_path: &str,
+    title: &str,
     duration_ms: i64,
     follow_live: bool,
 ) -> Option<i64> {
@@ -4702,6 +4802,7 @@ fn record_history(
 
     let inserted = ui.history.borrow().insert(&NewGeneration {
         prompt: &generate.prompt,
+        title,
         model: generate.model.id,
         style: &generate.style,
         width: generate.width,
@@ -4725,6 +4826,7 @@ fn record_history(
             let entry = Generation {
                 id,
                 prompt: generate.prompt.clone(),
+                title: title.to_string(),
                 model: generate.model.id.to_string(),
                 style: generate.style.clone(),
                 width: generate.width,
@@ -5400,8 +5502,85 @@ fn back_to_view(ui: &Rc<Ui>) {
     ui.status.set_text("Viewing image");
 }
 
-/// Show an image with a crossfade from the currently visible canvas image.
+/// Prepare the canvas for the live camera picture.
+pub(crate) fn begin_camera_preview_view(ui: &Rc<Ui>) {
+    transform::forget(ui);
+    ui.transform_button.popdown();
+    ui.crop_button.set_active(false);
+    ui.effects_popover.popdown();
+    if ui.compare_button.is_active() {
+        ui.compare_button.set_active(false);
+    }
+    reset_zoom(ui);
+    update_image_actions(ui);
+}
+
+/// Paint one preview frame without the crossfade animation.
+pub(crate) fn show_camera_preview_frame(ui: &Rc<Ui>, texture: &gdk::Texture) {
+    let rounded = rounded_paintable::RoundedPaintable::new(texture);
+    match ui.stack.visible_child_name().as_deref() {
+        Some("back") => ui.picture_back.set_paintable(Some(&rounded)),
+        _ => {
+            ui.picture.set_paintable(Some(&rounded));
+            ui.stack.set_visible_child_name("image");
+        }
+    }
+    ui.image_size
+        .set((texture.width() as u32, texture.height() as u32));
+}
+
+/// Show a transform preview without touching the saved image or History.
+pub(crate) fn show_transform_preview(ui: &Rc<Ui>, texture: &gdk::Texture) {
+    ui.image_size
+        .set((texture.width() as u32, texture.height() as u32));
+    crossfade_to_texture(ui, texture);
+    reset_zoom(ui);
+    update_image_actions(ui);
+}
+
+/// Show a transformed image while keeping (or replacing) the reference set.
+///
+/// `fade_to_image` deliberately clears references for history browsing; a
+/// rotation or flip of a reference must preserve it instead.
+pub(crate) fn show_image_with_references(
+    ui: &Rc<Ui>,
+    path: &Path,
+    references: Vec<PathBuf>,
+) -> bool {
+    camera::forget(ui);
+    transform::forget(ui);
+    if ui.compare_button.is_active() {
+        ui.compare_button.set_active(false);
+    }
+    let texture = match gdk::Texture::from_filename(path) {
+        Ok(texture) => texture,
+        Err(error) => {
+            tracing::warn!(%error, path = %path.display(), "failed to load image");
+            return false;
+        }
+    };
+
+    let (width, height) = (texture.width() as u32, texture.height() as u32);
+    ui.image_size.set((width, height));
+    {
+        let mut state = ui.state.borrow_mut();
+        state.display = Some(path.to_path_buf());
+        state.references = references;
+    }
+    render_reference_strip(ui);
+    crossfade_to_texture(ui, &texture);
+    if ui.state.borrow().references.len() <= 1 {
+        set_ratio_for_image(ui, width, height);
+    }
+    sync_history_selection(ui);
+    reset_zoom(ui);
+    update_image_actions(ui);
+    true
+}
+
 pub(crate) fn fade_to_image(ui: &Rc<Ui>, path: &Path) -> bool {
+    camera::forget(ui);
+    transform::forget(ui);
     if ui.compare_button.is_active() {
         ui.compare_button.set_active(false);
     }
@@ -6335,6 +6514,7 @@ mod tests {
         let entry = super::Generation {
             id: 7,
             prompt: "a test lighthouse".into(),
+            title: String::new(),
             model: "flux2-klein-4b".into(),
             style: "cinematic".into(),
             width: 608,

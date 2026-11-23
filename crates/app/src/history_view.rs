@@ -336,10 +336,11 @@ fn build_row_box(ui: &Rc<Ui>, entry: &Generation, depth: usize, group: RowGroup)
     text.set_valign(gtk::Align::Center);
     text.set_hexpand(true);
     let prompt_label = gtk::Label::builder()
-        .label(&entry.prompt)
+        .label(entry.display_name())
         .xalign(0.0)
-        .ellipsize(gtk::pango::EllipsizeMode::End)
-        .max_width_chars(18)
+        // Keep both the base title and the derived suffix visible.
+        .ellipsize(gtk::pango::EllipsizeMode::Middle)
+        .max_width_chars(24)
         .lines(1)
         .build();
     let meta_label = gtk::Label::builder()
@@ -717,7 +718,7 @@ fn row_tooltip(entry: &Generation, group_size: usize, first_in_chain: bool) -> S
     let mut tooltip = if kind_label(&entry.kind).is_some() {
         format!(
             "{}\n{} · {} × {} · {:.1}s{}",
-            entry.prompt,
+            entry.display_name(),
             entry_model_label(entry),
             entry.width,
             entry.height,
@@ -731,7 +732,7 @@ fn row_tooltip(entry: &Generation, group_size: usize, first_in_chain: bool) -> S
     } else {
         format!(
             "{}\n{} · {} × {} · {} steps · {:.1}s · seed {}\nstyle: {}{}",
-            entry.prompt,
+            entry.display_name(),
             entry_model_label(entry),
             entry.width,
             entry.height,
@@ -746,6 +747,9 @@ fn row_tooltip(entry: &Generation, group_size: usize, first_in_chain: bool) -> S
             }
         )
     };
+    if !entry.title.trim().is_empty() {
+        tooltip.push_str(&format!("\nprompt: {}", entry.prompt));
+    }
     if group_size > 1 {
         tooltip.push_str(&format!("\nchain: {group_size} images"));
     }
@@ -850,7 +854,13 @@ fn inside_interactive(widget: &gtk::Widget) -> bool {
 /// The prompt is deliberately left alone: the composer starts empty and past
 /// prompts are loaded from the prompt picker.
 pub(crate) fn restore_settings(ui: &Rc<Ui>, entry: &Generation) {
-    if matches!(entry.kind.as_str(), "upscale" | "adjust" | "import") {
+    if matches!(
+        entry.kind.as_str(),
+        "upscale" | "adjust" | "transform" | "import"
+    ) {
+        // These entries have no meaningful model, style or seed to restore,
+        // but the sidebar ratio should still follow the selected image.
+        crate::set_ratio_for_image(ui, entry.width, entry.height);
         return;
     }
 
@@ -880,6 +890,7 @@ pub(crate) fn kind_label(kind: &str) -> Option<&'static str> {
     match kind {
         "upscale" => Some("Upscaled"),
         "adjust" => Some("Adjusted"),
+        "transform" => Some("Transformed"),
         "import" => Some("Opened"),
         "custom" => Some("Effect"),
         "colorize" => Some("Colorized"),
@@ -963,6 +974,10 @@ fn show_info(ui: &Rc<Ui>, entry: &Generation) {
     content.set_margin_start(4);
     content.set_margin_end(4);
 
+    if !entry.title.trim().is_empty() {
+        content.append(&kv("Title", &entry.title));
+    }
+
     if entry.kind == "upscale" {
         content.append(&kv("Action", &entry.prompt));
         content.append(&kv("Upscaler", entry_model_label(entry)));
@@ -979,8 +994,13 @@ fn show_info(ui: &Rc<Ui>, entry: &Generation) {
             content.append(&kv("Source", source));
         }
         content.append(&kv("File", &entry.image_path));
-    } else if entry.kind == "adjust" {
-        content.append(&kv("Adjustments", &entry.prompt));
+    } else if entry.kind == "adjust" || entry.kind == "transform" {
+        let label = if entry.kind == "adjust" {
+            "Adjustments"
+        } else {
+            "Transform"
+        };
+        content.append(&kv(label, &entry.prompt));
         content.append(&kv("Model", model_label(&entry.model)));
         content.append(&kv(
             "Size",
@@ -1054,6 +1074,7 @@ fn show_info(ui: &Rc<Ui>, entry: &Generation) {
         .heading(match entry.kind.as_str() {
             "upscale" => "Upscale details",
             "adjust" => "Adjustment details",
+            "transform" => "Transform details",
             "colorize" => "Colorize details",
             "night" => "Night details",
             "day" => "Daylight details",
@@ -1064,7 +1085,7 @@ fn show_info(ui: &Rc<Ui>, entry: &Generation) {
         .extra_child(&scroller)
         .build();
     dialog.add_response("close", "Close");
-    if entry.kind != "upscale" && entry.kind != "adjust" {
+    if entry.kind != "upscale" && entry.kind != "adjust" && entry.kind != "transform" {
         dialog.add_response("copy", "Copy prompt");
     }
     dialog.add_response("use", "Use as reference");
@@ -1441,6 +1462,7 @@ mod tests {
         Generation {
             id,
             prompt: format!("entry {id}"),
+            title: String::new(),
             model: "flux2-klein-4b".into(),
             style: "none".into(),
             width: 512,

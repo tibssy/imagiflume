@@ -5,7 +5,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk::{gdk, glib};
 use imagiflume_core::Config;
-use imagiflume_core::runtime::{self, BackendEntry, BackendManifest, HardwareProfile};
+use imagiflume_core::runtime::{self, BackendEntry, BackendKind, BackendManifest, HardwareProfile};
 
 use crate::Ui;
 
@@ -16,7 +16,7 @@ type RefreshSlot = Rc<RefCell<Option<Refresh>>>;
 
 /// Custom binaries link against host libraries that a Flatpak sandbox does
 /// not expose, so the chooser is only useful in native builds.
-fn in_flatpak() -> bool {
+pub(crate) fn in_flatpak() -> bool {
     std::env::var_os("FLATPAK_ID").is_some() || Path::new("/.flatpak-info").exists()
 }
 
@@ -247,6 +247,7 @@ impl Section {
             Section::LlamaCpp => format!("Active llama.cpp: {}", path.display()),
         };
         ui.toast.add_toast(adw::Toast::new(&message));
+        crate::update_backend_status(ui);
     }
 
     fn refresh_message(self, outcome: &imagiflume_models::ManifestRefresh) -> String {
@@ -348,6 +349,7 @@ pub(crate) fn auto_install_cpu(ui: &Rc<Ui>) {
             ui_for_done.backend.set_server(server, backend);
             ui_for_done.backend.unload();
             ui_for_done.status.set_text("Ready · CPU backend installed");
+            crate::update_backend_status(&ui_for_done);
             ui_for_done
                 .toast
                 .add_toast(adw::Toast::new("CPU backend installed."));
@@ -1213,9 +1215,102 @@ fn short_version(version: &str) -> &str {
     version.rsplit('-').next().unwrap_or(version)
 }
 
+/// One-line summary of the selected backends for the status bar.
+pub(crate) fn active_summary(config: &Config) -> String {
+    format!(
+        "sd-server: {} | llama.cpp: {}",
+        sd_backend_label(config),
+        llama_backend_label(config)
+    )
+}
+
+fn manifest_kind_label(id: &str) -> Option<&'static str> {
+    runtime::bundled_manifest()
+        .backends
+        .iter()
+        .find(|entry| entry.id == id)
+        .map(|entry| entry.kind.label())
+}
+
+fn sd_backend_label(config: &Config) -> String {
+    if let Some(id) = &config.backend_id
+        && let Some(label) = manifest_kind_label(id)
+    {
+        return label.to_string();
+    }
+    if let Some(backend) = &config.backend {
+        let name = backend.trim_end_matches(|character: char| character.is_ascii_digit());
+        return match name {
+            "cpu" => "CPU",
+            "vulkan" => "Vulkan",
+            "cuda" => "CUDA",
+            "rocm" => "ROCm",
+            _ => backend.as_str(),
+        }
+        .to_string();
+    }
+    if config.custom_server.is_some() && config.custom_server == config.sd_server {
+        return "Custom".into();
+    }
+    "auto".into()
+}
+
+fn llama_backend_label(config: &Config) -> String {
+    if let Some(id) = &config.llama_backend_id
+        && let Some(entry) = runtime::bundled_llama_manifest()
+            .backends
+            .iter()
+            .find(|entry| &entry.id == id)
+    {
+        if entry.kind == BackendKind::Cpu {
+            return "CPU".into();
+        }
+        let label = entry.kind.label();
+        if let Some(cli) = crate::prompt_ai::find_cli(config)
+            && let Some(devices) = crate::prompt_ai::list_devices(&cli)
+        {
+            let available = match entry.kind {
+                BackendKind::Cpu => true,
+                BackendKind::Vulkan => devices.contains("Vulkan"),
+                BackendKind::Cuda => devices.contains("CUDA"),
+                BackendKind::Rocm => devices.contains("ROCm") || devices.contains("HIP"),
+            };
+            return if available {
+                label.into()
+            } else {
+                format!("CPU ({label} build)")
+            };
+        }
+        return label.into();
+    }
+    if config.llama_custom_cli.is_some() && config.llama_custom_cli == config.prompt_helper_cli {
+        return "Custom".into();
+    }
+    if crate::prompt_ai::find_cli(config).is_some() {
+        "CPU".into()
+    } else {
+        "not set".into()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn summarizes_active_backends() {
+        let mut config = Config::default();
+        assert!(active_summary(&config).starts_with("sd-server: auto | llama.cpp: "));
+
+        config.backend_id = Some("cuda12".into());
+        config.backend = Some("cuda0".into());
+        config.llama_backend_id = Some("llama-cpu".into());
+        assert_eq!(active_summary(&config), "sd-server: CUDA | llama.cpp: CPU");
+
+        config.backend_id = None;
+        config.backend = Some("vulkan0".into());
+        assert_eq!(sd_backend_label(&config), "Vulkan");
+    }
 
     #[test]
     fn hides_update_when_manifest_points_at_rollback_copy() {

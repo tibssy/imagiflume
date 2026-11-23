@@ -3,8 +3,77 @@
 All notable changes to Imagiflume. Alpha builds are test releases; expect
 rough edges.
 
-## Unreleased
+## 0.2.0-beta.1 — 2026-11-22
 
+- **Backends**: Vulkan is only offered when a Vulkan ICD is installed, and a
+  selected non-CPU backend that fails to start is retried with automatic device
+  selection plus a warning instead of failing the job. The bottom-right status
+  line shows the selected `sd-server` and `llama.cpp` backends, switches the
+  `sd-server` label to `auto` after such a fallback, and shows llama.cpp as
+  `CPU (Vulkan build)` when its helper falls back because no device is present.
+- **Image transforms**: the canvas transform menu previews 90° left/right
+  rotations and horizontal/vertical flips, and only the checkmark saves the
+  result. The checkmark stays disabled when the preview returns to the original
+  orientation, and a new transform after that starts a fresh suffix instead of
+  listing the whole round trip. It works on generated images and on references.
+  Recorded images join the history chain; cache-only references are replaced in
+  the reference set.
+- **History titles**: generated images get a short base title from `llama-cli`
+  (or a prompt-derived fallback). Derived images append a suffix such as
+  `- Upscaled 2x`, `- Rotated +90`, `- Brightness +28` or the effect name, and
+  the PNG file name uses the same title. History rows show the title instead of
+  the full prompt; imported images keep their file name. The history schema
+  moves to version 2 with a `title` column, so existing databases are backed up
+  as `history.v1.bak` before the migration.
+- **Camera permissions**: capture goes through the XDG camera portal. The
+  first use asks for permission, GNOME lists Imagiflume under
+  **Settings → Privacy & Security → Camera**, and a denial points at that
+  setting instead of silently opening the device. Frames are read from the
+  portal's PipeWire stream with GStreamer, which also removes the `ffmpeg`
+  requirement. The camera button now opens a live preview; a second press saves
+  the current frame, adds it as a reference and releases the camera, while
+  **Esc** closes the preview. The portal remote and its GStreamer provider stay
+  alive between shots, so repeated captures no longer hit a transient
+  "No camera found". The Flatpak now requests `--device=dri` instead of the
+  broad `--device=all`; native sessions without a camera portal keep the V4L2
+  fallback.
+- **Diagnostics**: About now shows detected hardware and the backend log paths,
+  including a new persistent `llama-cli.log`, with an open-log button and a
+  **Copy diagnostics** action that includes the version, channel, locale, GPU,
+  backend, paths and log locations.
+- **Backend crash and OOM messages**: when `sd-server` is killed mid-job or
+  reports only `generate_image returned no results`, the toast names the real
+  cause from the backend log instead of showing a raw `GET` URL. A CUDA
+  out-of-memory failure points at the image size and **Offload weights to
+  CPU**, and a model file that was removed or changed mid-job points at
+  Preferences. The log is only read from the current job, so an earlier
+  failure is not blamed on a later one.
+- **Canvas**: the upscale button is hidden when no upscaler weights are
+  installed and appears (or disappears) immediately after downloading or
+  deleting one in Preferences.
+- **Queue**: the queue expander is hosted in a list box, so Adwaita no longer
+  warns that an `AdwExpanderRow` was placed into a `GtkBox`. Its expanded
+  content uses the same rounded accent tint as an expanded history group
+  instead of Adwaita's darker nested-list shade.
+- **llama.cpp plumbing**: all helpers (CPU, Vulkan, ROCm 10, CUDA 12 and
+  CUDA 13) are now static `LLAMA_OPENSSL=OFF` builds, so none of them requires
+  `libssl` on minimal distros. Prompt-improvement failures still add the
+  OpenSSL package hint for any custom helper that needs it.
+- **History filter icon**: falls back to `view-list-symbolic` when the icon
+  theme has no `view-filter-symbolic`, avoiding the broken-image icon on some
+  distros.
+- **Spinners**: the running-job spinner and the floating queue pill keep
+  animating after the sidebar is hidden and shown again. GTK 4.24 pauses its
+  built-in spinner animation on unmap and does not restart it on remap, so the
+  queue uses a small tick-driven spinner instead.
+- **Aspect ratio**: selecting an upscaled, adjusted or imported image now points
+  the sidebar ratio at that image without changing the MP target. Previously the
+  ratio only updated after pressing **Edit** on the canvas.
+- **History database**: the schema is now versioned, legacy files are backed up
+  next to the database (`history.v0.bak`) before migration, migrations run in a
+  transaction, and the database is integrity-checked on open. A corrupt or
+  newer-schema file is rejected instead of being silently used, and a startup
+  toast explains when this session had to fall back to temporary history.
 - **Sidebar setup**: removed the installed-model caption, increased the spacing
   between controls, and put the model dropdown and LoRA button on one row. The
   button uses the accent colour when any LoRA is active.
