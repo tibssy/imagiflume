@@ -24,7 +24,7 @@ pkgbase = imagiflume
 	optdepends = llama.cpp: prompt improvement using the active text encoder
 	source = imagiflume-0.2.0-beta.2.tar.gz::https://github.com/tibssy/imagiflume/archive/refs/tags/v0.2.0-beta.2.tar.gz
 	source = stable-diffusion.cpp::git+https://github.com/leejet/stable-diffusion.cpp#commit=32d516c0197ed5ca31305b8575e14eb1451fad33
-	sha256sums = SKIP
+	sha256sums = 40e5e6f51ac62bfbd3fb700bf87af19a70c96e628bf65696234b62e0900aaf21
 	sha256sums = SKIP
 
 pkgname = imagiflume
