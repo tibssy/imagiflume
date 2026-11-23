@@ -538,6 +538,7 @@ impl Inner {
     fn wait_ready(&mut self, model: &ModelPreset) -> Result<()> {
         let deadline = Instant::now() + START_TIMEOUT;
         let url = format!("http://127.0.0.1:{}/sdcpp/v1/models/status", self.port);
+        let mut last_state: Option<String> = None;
         loop {
             if let Some(child) = self.child.as_mut()
                 && let Some(status) = child.try_wait()?
@@ -556,8 +557,13 @@ impl Inner {
                 && response.status().is_success()
                 && let Ok(status) = response.json::<ModelStatus>()
             {
+                last_state = Some(status.state.clone());
                 match status.state.as_str() {
-                    "ready" => return Ok(()),
+                    state if accepts_jobs(state) => return Ok(()),
+                    "empty" => {
+                        self.stop();
+                        bail!("sd-server has no model configured for {}", model.label);
+                    }
                     "error" => {
                         self.stop();
                         bail!(
@@ -572,7 +578,8 @@ impl Inner {
 
             if Instant::now() >= deadline {
                 self.stop();
-                bail!("timed out loading {}", model.label);
+                let state = last_state.as_deref().unwrap_or("no response");
+                bail!("timed out loading {} (backend state: {state})", model.label);
             }
             std::thread::sleep(Duration::from_millis(250));
         }
@@ -641,6 +648,15 @@ impl Job {
         let completed = progress.completed.unwrap_or(0);
         Some(((completed + 1).min(total), total))
     }
+}
+
+/// Whether the backend is ready to accept a job.
+///
+/// Builds before `3b12781` load the model at startup and report `ready`.
+/// `3b12781` configures the model lazily and reports `configured` until the
+/// first job, so both states mean the server can generate.
+fn accepts_jobs(state: &str) -> bool {
+    matches!(state, "ready" | "configured")
 }
 
 /// The server's own wording for failures it does not explain further.
@@ -835,5 +851,14 @@ mod tests {
         assert!(is_generic_failure("generate_image returned no results"));
         assert!(is_generic_failure("generation failed"));
         assert!(!is_generic_failure("LoRA weight could not be loaded"));
+    }
+
+    #[test]
+    fn accepts_ready_and_lazily_configured_backends() {
+        assert!(accepts_jobs("ready"));
+        assert!(accepts_jobs("configured"));
+        assert!(!accepts_jobs("loading"));
+        assert!(!accepts_jobs("empty"));
+        assert!(!accepts_jobs("error"));
     }
 }

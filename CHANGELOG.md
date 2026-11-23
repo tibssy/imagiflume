@@ -3,6 +3,14 @@
 All notable changes to Imagiflume. Alpha builds are test releases; expect
 rough edges.
 
+## Unreleased
+
+- **Backend compatibility**: accept the `configured` state reported by
+  stable-diffusion.cpp `3b12781` and newer. Those builds configure the model
+  lazily and no longer report `ready` before the first job, which made the app
+  wait for the 180 s startup timeout on every model. The timeout now names the
+  state the backend reported and fails immediately when the model is `empty`.
+
 ## 0.2.0-beta.1 — 2026-11-22
 
 - **Backends**: Vulkan is only offered when a Vulkan ICD is installed, and a
