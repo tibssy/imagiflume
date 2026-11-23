@@ -29,6 +29,19 @@ pub(crate) enum Transform {
     FlipVertical,
 }
 
+/// Row-major 2×2 matrix of the dihedral group. Tracking it tells us when the
+/// preview ended up exactly where it started, including mixed rotations/flips.
+const IDENTITY: [i32; 4] = [1, 0, 0, 1];
+
+fn multiply(left: [i32; 4], right: [i32; 4]) -> [i32; 4] {
+    [
+        left[0] * right[0] + left[1] * right[2],
+        left[0] * right[1] + left[1] * right[3],
+        left[2] * right[0] + left[3] * right[2],
+        left[2] * right[1] + left[3] * right[3],
+    ]
+}
+
 impl Transform {
     fn apply(self, image: DynamicImage) -> DynamicImage {
         match self {
@@ -36,6 +49,15 @@ impl Transform {
             Self::RotateRight => image.rotate90(),
             Self::FlipHorizontal => image.fliph(),
             Self::FlipVertical => image.flipv(),
+        }
+    }
+
+    fn matrix(self) -> [i32; 4] {
+        match self {
+            Self::RotateLeft => [0, -1, 1, 0],
+            Self::RotateRight => [0, 1, -1, 0],
+            Self::FlipHorizontal => [-1, 0, 0, 1],
+            Self::FlipVertical => [1, 0, 0, -1],
         }
     }
 
@@ -53,6 +75,7 @@ pub(crate) struct Preview {
     source: std::path::PathBuf,
     current: DynamicImage,
     operations: Vec<Transform>,
+    matrix: [i32; 4],
 }
 
 /// Start a preview session when the popover opens.
@@ -77,6 +100,7 @@ pub(crate) fn begin(ui: &Rc<Ui>) -> bool {
         source,
         current: image,
         operations: Vec::new(),
+        matrix: IDENTITY,
     });
     ui.transform_apply_button.set_sensitive(false);
     true
@@ -87,7 +111,7 @@ pub(crate) fn preview(ui: &Rc<Ui>, transform: Transform) {
     if ui.transform_preview.borrow().is_none() && !begin(ui) {
         return;
     }
-    let (texture, label) = {
+    let (texture, label, original) = {
         let mut guard = ui.transform_preview.borrow_mut();
         let Some(preview) = guard.as_mut() else {
             return;
@@ -95,11 +119,20 @@ pub(crate) fn preview(ui: &Rc<Ui>, transform: Transform) {
         let current = std::mem::replace(&mut preview.current, DynamicImage::new_rgba8(1, 1));
         preview.current = transform.apply(current);
         preview.operations.push(transform);
-        (texture_for(&preview.current), transform.label())
+        preview.matrix = multiply(transform.matrix(), preview.matrix);
+        (
+            texture_for(&preview.current),
+            transform.label(),
+            preview.matrix == IDENTITY,
+        )
     };
     show_transform_preview(ui, &texture);
-    ui.transform_apply_button.set_sensitive(true);
-    ui.status.set_text(&format!("Preview · {label}"));
+    ui.transform_apply_button.set_sensitive(!original);
+    if original {
+        ui.status.set_text("Preview · original");
+    } else {
+        ui.status.set_text(&format!("Preview · {label}"));
+    }
 }
 
 /// Save the previewed image and add it to History (or the reference set).
@@ -109,6 +142,7 @@ pub(crate) fn commit(ui: &Rc<Ui>) {
     };
     ui.transform_apply_button.set_sensitive(false);
     if preview.operations.is_empty()
+        || preview.matrix == IDENTITY
         || ui.state.borrow().display.as_deref() != Some(preview.source.as_path())
     {
         return;
@@ -298,6 +332,24 @@ mod tests {
             Transform::RotateLeft.apply(image(2, 3)).dimensions(),
             (3, 2)
         );
+    }
+
+    #[test]
+    fn matrix_detects_a_return_to_the_original_orientation() {
+        let right = Transform::RotateRight.matrix();
+        let left = Transform::RotateLeft.matrix();
+        let horizontal = Transform::FlipHorizontal.matrix();
+        let vertical = Transform::FlipVertical.matrix();
+
+        assert_eq!(multiply(left, right), IDENTITY);
+        assert_eq!(multiply(horizontal, horizontal), IDENTITY);
+        assert_eq!(multiply(vertical, vertical), IDENTITY);
+        assert_eq!(
+            multiply(right, multiply(right, multiply(right, right))),
+            IDENTITY
+        );
+        assert_ne!(multiply(horizontal, right), IDENTITY);
+        assert_ne!(multiply(horizontal, vertical), IDENTITY);
     }
 
     #[test]
