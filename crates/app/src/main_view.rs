@@ -34,6 +34,11 @@ pub(crate) struct MainView {
     pub upscale_button: gtk::Button,
     pub variation_button: gtk::Button,
     pub adjust_button: gtk::Button,
+    pub transform_button: gtk::MenuButton,
+    pub rotate_left_button: gtk::Button,
+    pub rotate_right_button: gtk::Button,
+    pub flip_horizontal_button: gtk::Button,
+    pub flip_vertical_button: gtk::Button,
     /// Returns from a history image to the running job's live preview.
     pub live_button: gtk::Button,
     pub zoom_scroller: gtk::ScrolledWindow,
@@ -150,6 +155,54 @@ pub(crate) fn build() -> MainView {
         .visible(false)
         .css_classes(["osd", "circular"])
         .build();
+    let rotate_left_button = gtk::Button::builder()
+        .icon_name("object-rotate-left-symbolic")
+        .tooltip_text("Rotate 90° left")
+        .css_classes(["flat", "circular"])
+        .build();
+    let rotate_right_button = gtk::Button::builder()
+        .icon_name("object-rotate-right-symbolic")
+        .tooltip_text("Rotate 90° right")
+        .css_classes(["flat", "circular"])
+        .build();
+    let flip_horizontal_button = gtk::Button::builder()
+        .icon_name("object-flip-horizontal-symbolic")
+        .tooltip_text("Flip horizontally")
+        .css_classes(["flat", "circular"])
+        .build();
+    let flip_vertical_button = gtk::Button::builder()
+        .icon_name("object-flip-vertical-symbolic")
+        .tooltip_text("Flip vertically")
+        .css_classes(["flat", "circular"])
+        .build();
+    let transform_box = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    transform_box.set_margin_top(8);
+    transform_box.set_margin_bottom(8);
+    transform_box.set_margin_start(8);
+    transform_box.set_margin_end(8);
+    transform_box.append(&rotate_left_button);
+    transform_box.append(&rotate_right_button);
+    transform_box.append(&flip_horizontal_button);
+    transform_box.append(&flip_vertical_button);
+    let transform_popover = gtk::Popover::new();
+    transform_popover.set_child(Some(&transform_box));
+    for button in [
+        &rotate_left_button,
+        &rotate_right_button,
+        &flip_horizontal_button,
+        &flip_vertical_button,
+    ] {
+        let popover = transform_popover.clone();
+        button.connect_clicked(move |_| popover.popdown());
+    }
+    let transform_button = gtk::MenuButton::builder()
+        .icon_name("object-rotate-right-symbolic")
+        .tooltip_text("Rotate or flip the image")
+        .always_show_arrow(false)
+        .visible(false)
+        .css_classes(["osd", "circular"])
+        .build();
+    transform_button.set_popover(Some(&transform_popover));
     let live_button = gtk::Button::builder()
         .icon_name("view-reveal-symbolic")
         .tooltip_text("Show the running job's live preview")
@@ -342,6 +395,7 @@ pub(crate) fn build() -> MainView {
     image_actions.append(&effects_button);
     image_actions.append(&save_effect_button);
     image_actions.append(&adjust_button);
+    image_actions.append(&transform_button);
     image_actions.append(&upscale_button);
     image_actions.append(&variation_button);
     image_actions.append(&edit_button);
@@ -624,6 +678,11 @@ pub(crate) fn build() -> MainView {
         crop_overlay,
         zoom_overlay,
         adjust_button,
+        transform_button,
+        rotate_left_button,
+        rotate_right_button,
+        flip_horizontal_button,
+        flip_vertical_button,
         zoom_scroller: scroller,
         zoom_controls,
         zoom_out_button,

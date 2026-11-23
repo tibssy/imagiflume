@@ -324,6 +324,7 @@ fn save_adjusted(ui: &Rc<Ui>, preview: &Preview, adjustments: Adjustments, popov
 
     let inserted = ui.history.borrow().insert(&NewGeneration {
         prompt: &prompt,
+        title: "",
         model: &model,
         style: "none",
         width,
@@ -347,6 +348,7 @@ fn save_adjusted(ui: &Rc<Ui>, preview: &Preview, adjustments: Adjustments, popov
             let entry = Generation {
                 id,
                 prompt: prompt.clone(),
+                title: String::new(),
                 model,
                 style: "none".into(),
                 width,

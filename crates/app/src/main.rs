@@ -16,6 +16,7 @@ mod rounded_paintable;
 mod sidebar;
 mod spinner;
 mod state;
+mod transform;
 mod upscale_dialog;
 
 use std::cell::{Cell, RefCell};
@@ -97,6 +98,11 @@ pub(crate) struct Ui {
     pub upscale_button: gtk::Button,
     pub variation_button: gtk::Button,
     pub adjust_button: gtk::Button,
+    pub transform_button: gtk::MenuButton,
+    pub rotate_left_button: gtk::Button,
+    pub rotate_right_button: gtk::Button,
+    pub flip_horizontal_button: gtk::Button,
+    pub flip_vertical_button: gtk::Button,
     /// View zoom factor, 1.0 being fit-to-window.
     pub zoom: Cell<f64>,
     /// Running zoom animation, if any.
@@ -626,6 +632,11 @@ fn build_ui(app: &adw::Application) {
         upscale_button: view.upscale_button,
         variation_button: view.variation_button,
         adjust_button: view.adjust_button,
+        transform_button: view.transform_button,
+        rotate_left_button: view.rotate_left_button,
+        rotate_right_button: view.rotate_right_button,
+        flip_horizontal_button: view.flip_horizontal_button,
+        flip_vertical_button: view.flip_vertical_button,
         zoom: Cell::new(1.0),
         zoom_animation: RefCell::new(None),
         zoom_scroller: view.zoom_scroller,
@@ -1247,6 +1258,27 @@ fn wire_events(ui: &Rc<Ui>, preferences_button: &gtk::Button) {
         let ui = ui.clone();
         let button = ui.adjust_button.clone();
         button.connect_clicked(move |_| adjust::show(&ui));
+    }
+    for (button, operation) in [
+        (
+            ui.rotate_left_button.clone(),
+            transform::Transform::RotateLeft,
+        ),
+        (
+            ui.rotate_right_button.clone(),
+            transform::Transform::RotateRight,
+        ),
+        (
+            ui.flip_horizontal_button.clone(),
+            transform::Transform::FlipHorizontal,
+        ),
+        (
+            ui.flip_vertical_button.clone(),
+            transform::Transform::FlipVertical,
+        ),
+    ] {
+        let ui = ui.clone();
+        button.connect_clicked(move |_| transform::apply(&ui, operation));
     }
     {
         let ui = ui.clone();
@@ -2333,6 +2365,7 @@ pub(crate) fn update_image_actions(ui: &Rc<Ui>) {
                 .is_some_and(|entry| entry.kind == "generate" && !entry.prompt.trim().is_empty()),
     );
     ui.adjust_button.set_visible(actions && stable);
+    ui.transform_button.set_visible(actions && stable);
     ui.live_button
         .set_visible(generating && !upscaling && !ui.live_view.get());
     ui.edit_button.set_visible(editable && !composing);
@@ -2964,6 +2997,7 @@ fn import_image(ui: &Rc<Ui>, path: PathBuf) {
         .unwrap_or_else(|| "Imported image".to_string());
     let inserted = ui.history.borrow().insert(&NewGeneration {
         prompt: &title,
+        title: "",
         model: "import",
         style: "none",
         width,
@@ -2987,6 +3021,7 @@ fn import_image(ui: &Rc<Ui>, path: PathBuf) {
             let entry = Generation {
                 id,
                 prompt: title,
+                title: String::new(),
                 model: "import".into(),
                 style: "none".into(),
                 width,
@@ -4517,6 +4552,7 @@ fn record_upscale(
 
     let inserted = ui.history.borrow().insert(&NewGeneration {
         prompt: &prompt,
+        title: "",
         model: model_id,
         style: "none",
         width: image.width,
@@ -4540,6 +4576,7 @@ fn record_upscale(
             let entry = Generation {
                 id,
                 prompt: prompt.clone(),
+                title: String::new(),
                 model: model_id.to_string(),
                 style: "none".into(),
                 width: image.width,
@@ -4662,6 +4699,7 @@ fn record_history(
 
     let inserted = ui.history.borrow().insert(&NewGeneration {
         prompt: &generate.prompt,
+        title: "",
         model: generate.model.id,
         style: &generate.style,
         width: generate.width,
@@ -4685,6 +4723,7 @@ fn record_history(
             let entry = Generation {
                 id,
                 prompt: generate.prompt.clone(),
+                title: String::new(),
                 model: generate.model.id.to_string(),
                 style: generate.style.clone(),
                 width: generate.width,
@@ -4715,6 +4754,7 @@ fn record_history(
                 history_view::highlight(ui, &display);
             }
             update_image_actions(ui);
+            request_title(ui, &entry);
             Some(id)
         }
         Err(error) => {
@@ -4722,6 +4762,54 @@ fn record_history(
             None
         }
     }
+}
+
+/// Ask llama.cpp for a short display title after a generation.
+///
+/// The prompt stays the source of truth; a missing helper, a model without a
+/// usable text encoder, or a failed run simply leaves the title empty and the
+/// history row keeps showing the prompt.
+fn request_title(ui: &Rc<Ui>, entry: &Generation) {
+    if entry.kind != "generate" || entry.prompt.trim().is_empty() {
+        return;
+    }
+    let Some(cli) = prompt_ai::find_cli(&ui.config.borrow()) else {
+        return;
+    };
+    let Some(encoder) = title_encoder(ui, &entry.model) else {
+        return;
+    };
+    if !encoder.exists() {
+        return;
+    }
+
+    let id = entry.id;
+    let prompt = entry.prompt.clone();
+    let (sender, receiver) = async_channel::bounded(1);
+    std::thread::spawn(move || {
+        let _ = sender.send_blocking(prompt_ai::title(&prompt, &encoder, &cli));
+    });
+
+    let ui = ui.clone();
+    glib::spawn_future_local(async move {
+        let Ok(Ok(title)) = receiver.recv().await else {
+            tracing::debug!("history title generation failed");
+            return;
+        };
+        if let Err(error) = ui.history.borrow().set_title(id, &title) {
+            tracing::warn!(%error, "failed to store the history title");
+            return;
+        }
+        reload_history(&ui, true);
+    });
+}
+
+fn title_encoder(ui: &Ui, model_id: &str) -> Option<PathBuf> {
+    ui.config.borrow().prompt_helper_model.clone().or_else(|| {
+        preset(model_id)
+            .and_then(|preset| preset.llm_encoder())
+            .map(|file| ui.models_dir.join(file.rel_path))
+    })
 }
 
 /// Report LoRAs the server refused to register.
@@ -5361,6 +5449,44 @@ fn back_to_view(ui: &Rc<Ui>) {
 }
 
 /// Show an image with a crossfade from the currently visible canvas image.
+/// Show a transformed image while keeping (or replacing) the reference set.
+///
+/// `fade_to_image` deliberately clears references for history browsing; a
+/// rotation or flip of a reference must preserve it instead.
+pub(crate) fn show_image_with_references(
+    ui: &Rc<Ui>,
+    path: &Path,
+    references: Vec<PathBuf>,
+) -> bool {
+    if ui.compare_button.is_active() {
+        ui.compare_button.set_active(false);
+    }
+    let texture = match gdk::Texture::from_filename(path) {
+        Ok(texture) => texture,
+        Err(error) => {
+            tracing::warn!(%error, path = %path.display(), "failed to load image");
+            return false;
+        }
+    };
+
+    let (width, height) = (texture.width() as u32, texture.height() as u32);
+    ui.image_size.set((width, height));
+    {
+        let mut state = ui.state.borrow_mut();
+        state.display = Some(path.to_path_buf());
+        state.references = references;
+    }
+    render_reference_strip(ui);
+    crossfade_to_texture(ui, &texture);
+    if ui.state.borrow().references.len() <= 1 {
+        set_ratio_for_image(ui, width, height);
+    }
+    sync_history_selection(ui);
+    reset_zoom(ui);
+    update_image_actions(ui);
+    true
+}
+
 pub(crate) fn fade_to_image(ui: &Rc<Ui>, path: &Path) -> bool {
     if ui.compare_button.is_active() {
         ui.compare_button.set_active(false);
@@ -6295,6 +6421,7 @@ mod tests {
         let entry = super::Generation {
             id: 7,
             prompt: "a test lighthouse".into(),
+            title: String::new(),
             model: "flux2-klein-4b".into(),
             style: "cinematic".into(),
             width: 608,

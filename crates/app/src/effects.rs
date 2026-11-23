@@ -489,6 +489,7 @@ mod tests {
         Generation {
             id: 1,
             prompt: "repair this photo".into(),
+            title: String::new(),
             model: "flux2-klein-4b".into(),
             style: style.into(),
             width: 512,

@@ -5,9 +5,11 @@
 //! file for a few seconds. The optional day/night helper uses the small
 //! LFM2.5-VL model plus its multimodal projector instead.
 
+use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -20,8 +22,17 @@ composition, materials and atmosphere, but do not add new subjects or change \
 the scene. Keep it under 60 words. Return only the improved prompt wrapped in \
 <prompt> and </prompt> tags.";
 
+const TITLE_PROMPT: &str = "\
+Write a short, descriptive title for an image from the user's generation prompt. \
+Use 2 to 6 words, no quotes and no trailing punctuation. Return only the title.";
+
 const TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_TOKENS: u32 = 220;
+const TITLE_TIMEOUT: Duration = Duration::from_secs(60);
+const TITLE_MAX_TOKENS: u32 = 32;
+/// Titles are cheap to reuse, and serialising the runs avoids four llama-cli
+/// processes for a four-image batch.
+static TITLE_CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
 const VISION_PROMPT: &str =
     "Is this a night scene or a daylight scene? Answer with one word: night or daylight.";
 const VISION_TIMEOUT: Duration = Duration::from_secs(60);
@@ -81,6 +92,27 @@ pub(crate) fn improve(prompt: &str, encoder: &Path, cli: &Path) -> Result<String
 
     let stdout = run_command(build_command(cli, encoder, prompt), TIMEOUT)?;
     extract(&stdout).ok_or_else(|| anyhow!("the model did not return a prompt"))
+}
+
+/// Ask `encoder` for a short display title for the prompt.
+pub(crate) fn title(prompt: &str, encoder: &Path, cli: &Path) -> Result<String> {
+    if !encoder.exists() {
+        bail!("text encoder not found at {}", encoder.display());
+    }
+
+    let key = format!("{}\n{}", encoder.display(), prompt);
+    let cache = TITLE_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut cache = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(title) = cache.get(&key) {
+        return Ok(title.clone());
+    }
+
+    let stdout = run_command(build_title_command(cli, encoder, prompt), TITLE_TIMEOUT)?;
+    let title = parse_title(&stdout).ok_or_else(|| anyhow!("the model did not return a title"))?;
+    cache.insert(key, title.clone());
+    Ok(title)
 }
 
 /// Ask the vision helper whether `image` is a night scene.
@@ -193,6 +225,68 @@ fn build_command(cli: &Path, encoder: &Path, prompt: &str) -> Command {
         .arg("-lv")
         .arg("4");
     command
+}
+
+fn build_title_command(cli: &Path, encoder: &Path, prompt: &str) -> Command {
+    let mut command = Command::new(cli);
+    command
+        .arg("-m")
+        .arg(encoder)
+        .arg("-sys")
+        .arg(TITLE_PROMPT)
+        .arg("-p")
+        .arg(prompt)
+        .arg("-st")
+        .arg("--no-display-prompt")
+        .arg("--color")
+        .arg("off")
+        .arg("-rea")
+        .arg("off")
+        .arg("-c")
+        .arg("2048")
+        .arg("--no-warmup")
+        .arg("-n")
+        .arg(TITLE_MAX_TOKENS.to_string())
+        .arg("--temp")
+        .arg("0.3")
+        .arg("-t")
+        .arg(threads().to_string())
+        .arg("--simple-io");
+    command
+}
+
+fn parse_title(stdout: &str) -> Option<String> {
+    let text = strip_ansi(stdout);
+    let line = text.lines().map(str::trim).find(|line| !line.is_empty())?;
+    let line = line
+        .strip_prefix("Title:")
+        .or_else(|| line.strip_prefix("title:"))
+        .unwrap_or(line)
+        .trim();
+    let line = line
+        .trim_matches(|c: char| {
+            matches!(
+                c,
+                '"' | '\'' | '“' | '”' | '‘' | '’' | '`' | '*' | '#' | '-'
+            )
+        })
+        .trim();
+    let title = line
+        .split_whitespace()
+        .take(8)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let title = title
+        .trim_end_matches(['.', ',', ';', ':', '!', '?'])
+        .trim();
+    if title.chars().count() < 2
+        || title.chars().count() > 80
+        || title.starts_with('<')
+        || title.starts_with("```")
+    {
+        return None;
+    }
+    Some(title.to_string())
 }
 
 fn build_vision_command(cli: &Path, model: &Path, mmproj: &Path, image: &Path) -> Command {
@@ -392,6 +486,20 @@ mod tests {
         assert!(args.windows(2).any(|pair| pair == ["-n", "220"]));
         assert!(args.contains(&"--no-warmup".to_string()));
         assert!(args.contains(&"--simple-io".to_string()));
+    }
+
+    #[test]
+    fn parses_generated_titles() {
+        assert_eq!(
+            parse_title("Title: \"Stormy Lighthouse at Dusk.\"\n"),
+            Some("Stormy Lighthouse at Dusk".into())
+        );
+        assert_eq!(
+            parse_title("  **Golden Hour Fox**  "),
+            Some("Golden Hour Fox".into())
+        );
+        assert_eq!(parse_title(""), None);
+        assert_eq!(parse_title("<|im_end|>"), None);
     }
 
     #[test]

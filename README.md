@@ -39,7 +39,7 @@ Milestone 3 (packaged desktop app):
   newest image is the group header, older iterations expand below it, and the
   original sits at the bottom marked **first**. The **Select** button switches
   History to checkboxes for bulk deletion. The search button toggles the
-  search field (`Ctrl+F`), which matches prompts, models and seeds; the filter
+  search field (`Ctrl+F`), which matches prompts, titles, models and seeds; the filter
   button in the History header narrows the list to text-to-image, edits,
   upscales or adjustments; matching chains stay expanded, and a star marks
   **favorites**
@@ -100,6 +100,14 @@ Milestone 3 (packaged desktop app):
 - **manual adjustments** with brightness, contrast and saturation sliders and
   a live canvas preview; saving writes a new PNG that joins the history chain
   without re-running the model
+- **rotate and flip**: the transform menu over the canvas rotates 90° left or
+  right and flips horizontally or vertically. It works on generated images and
+  references; a recorded image joins the history chain, while a cache-only
+  reference is replaced in the reference set
+- **history titles**: after a generation, `llama-cli` writes a short title when
+  the active model has a usable language encoder, and the history row uses it;
+  the row falls back to the prompt when the helper is unavailable. Imported
+  images keep their file name
 - **batch and variations**: **Batch** in the sidebar queues 1–4 images with
   consecutive seeds, and the shuffle button over the canvas re-runs the
   displayed prompt with seed + 1
@@ -288,6 +296,7 @@ without leaving the app.
 | Batch generation | **Batch** spinner in the sidebar (1–4 images) |
 | Generate a variation | shuffle button over the canvas (seed + 1) |
 | Compare with the source | split button over the canvas |
+| Rotate or flip | transform menu over the canvas |
 | Pause / resume the queue | pause button in the **Queue** header |
 | Reorder waiting jobs | up/down arrows on a waiting queue row |
 | Duplicate a queued prompt | copy button on a waiting queue row |
