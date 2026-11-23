@@ -50,8 +50,9 @@ modules:
         -DGGML_FMA=ON
         -DGGML_F16C=ON
         -DGGML_OPENMP=ON
-      - cmake --build _build --target sd-server -j "$FLATPAK_BUILDER_N_JOBS"
+      - cmake --build _build --target sd-server sd-cli -j "$FLATPAK_BUILDER_N_JOBS"
       - install -Dm755 _build/bin/sd-server /app/lib/imagiflume/sd-server
+      - install -Dm755 _build/bin/sd-cli /app/lib/imagiflume/sd-cli
       - install -Dm644 LICENSE
         /app/share/licenses/io.github.tibssy.Imagiflume/LICENSE.stable-diffusion.cpp
     sources:
