@@ -502,6 +502,25 @@ mod tests {
         assert_eq!(parse_title("<|im_end|>"), None);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn reads_a_title_from_the_helper() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory =
+            std::env::temp_dir().join(format!("flux-title-test-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let cli = directory.join("llama-cli");
+        let encoder = directory.join("encoder.gguf");
+        std::fs::write(&encoder, b"test").unwrap();
+        std::fs::write(&cli, b"#!/bin/sh\necho 'Title: \"Golden Hour Fox.\"'\n").unwrap();
+        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let title = title("a unique test fox", &encoder, &cli).unwrap();
+        assert_eq!(title, "Golden Hour Fox");
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
     #[test]
     fn extracts_tagged_output() {
         let output = "\n> a red fox\n<prompt>A red fox in autumn leaves, golden hour.</prompt>\n\n[ Prompt: 70 t/s ]\nExiting...\n";
