@@ -21,7 +21,7 @@ use crate::{
     show_image_with_references, show_transform_preview, unix_seconds, write_thumbnail,
 };
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Transform {
     RotateLeft,
     RotateRight,
@@ -40,6 +40,17 @@ fn multiply(left: [i32; 4], right: [i32; 4]) -> [i32; 4] {
         left[2] * right[0] + left[3] * right[2],
         left[2] * right[1] + left[3] * right[3],
     ]
+}
+
+/// Track one preview operation. Whenever the image returns to its original
+/// orientation, forget the prefix: only operations after that point describe
+/// the copy that will be saved.
+fn apply_operation(operations: &mut Vec<Transform>, matrix: &mut [i32; 4], operation: Transform) {
+    *matrix = multiply(operation.matrix(), *matrix);
+    operations.push(operation);
+    if *matrix == IDENTITY {
+        operations.clear();
+    }
 }
 
 impl Transform {
@@ -118,8 +129,7 @@ pub(crate) fn preview(ui: &Rc<Ui>, transform: Transform) {
         };
         let current = std::mem::replace(&mut preview.current, DynamicImage::new_rgba8(1, 1));
         preview.current = transform.apply(current);
-        preview.operations.push(transform);
-        preview.matrix = multiply(transform.matrix(), preview.matrix);
+        apply_operation(&mut preview.operations, &mut preview.matrix, transform);
         (
             texture_for(&preview.current),
             transform.label(),
@@ -331,6 +341,38 @@ mod tests {
         assert_eq!(
             Transform::RotateLeft.apply(image(2, 3)).dimensions(),
             (3, 2)
+        );
+    }
+
+    #[test]
+    fn summary_restarts_after_the_original_orientation() {
+        let mut matrix = IDENTITY;
+        let mut operations = Vec::new();
+        for operation in [
+            Transform::FlipHorizontal,
+            Transform::FlipVertical,
+            Transform::RotateRight,
+            Transform::RotateRight,
+            Transform::FlipHorizontal,
+        ] {
+            apply_operation(&mut operations, &mut matrix, operation);
+        }
+        assert_eq!(operations, vec![Transform::FlipHorizontal]);
+        assert_eq!(
+            matrix,
+            multiply(Transform::FlipHorizontal.matrix(), IDENTITY)
+        );
+    }
+
+    #[test]
+    fn summary_keeps_non_identity_mixed_operations() {
+        let mut matrix = IDENTITY;
+        let mut operations = Vec::new();
+        apply_operation(&mut operations, &mut matrix, Transform::RotateRight);
+        apply_operation(&mut operations, &mut matrix, Transform::FlipHorizontal);
+        assert_eq!(
+            operations,
+            vec![Transform::RotateRight, Transform::FlipHorizontal]
         );
     }
 

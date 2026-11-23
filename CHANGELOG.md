@@ -14,9 +14,10 @@ rough edges.
 - **Image transforms**: the canvas transform menu previews 90° left/right
   rotations and horizontal/vertical flips, and only the checkmark saves the
   result. The checkmark stays disabled when the preview returns to the original
-  orientation. It works on generated images and on references. Recorded images
-  join the history chain; cache-only references are replaced in the reference
-  set.
+  orientation, and a new transform after that starts a fresh suffix instead of
+  listing the whole round trip. It works on generated images and on references.
+  Recorded images join the history chain; cache-only references are replaced in
+  the reference set.
 - **History titles**: generated images get a short base title from `llama-cli`
   (or a prompt-derived fallback). Derived images append a suffix such as
   `- Upscaled 2x`, `- Rotated +90`, `- Brightness +28` or the effect name, and
