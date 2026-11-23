@@ -33,6 +33,12 @@ Each entry describes one self-contained server archive:
 An entry with an empty `url`, zero `size`, or empty `sha256` is shown as
 “not published yet” and cannot be downloaded.
 
+`sd-server` changed its `/sdcpp/v1/models/status` contract in upstream
+`3b12781`: older builds report `ready` after loading at startup, while
+`3b12781` reports `configured` and loads the model on the first job. The app
+accepts both. Unknown states now produce a short error naming the reported
+state instead of waiting out the full 180 s startup timeout.
+
 ## Upstream CPU / Vulkan / ROCm
 
 The current entries pin `leejet/stable-diffusion.cpp` `master-1094-3bad892`:
