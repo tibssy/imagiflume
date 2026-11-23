@@ -233,11 +233,17 @@ fn capture_pipewire(fd: OwnedFd, path: &Path) -> Result<(), String> {
             .into_iter()
             .find(|device| device.device_class().starts_with("Video"))
             .ok_or_else(|| "No camera found.".to_string())?;
-        tracing::debug!(camera = %device.display_name(), "capturing a camera frame");
+        tracing::debug!(
+            camera = %device.display_name(),
+            class = %device.device_class(),
+            "capturing a camera frame"
+        );
         let source = device
             .create_element(None)
             .map_err(|error| format!("Could not open the camera: {error}"))?;
-        run_pipeline(source, path)
+        // decodebin makes pipewiresrc fail target resolution on the host
+        // PipeWire 1.6 / WirePlumber 0.5 stack; videoconvert alone works.
+        run_pipeline(source, path, false)
     })();
 
     provider.stop();
@@ -251,14 +257,11 @@ fn capture_v4l2(device: &Path, path: &Path) -> Result<(), String> {
         .build()
         .map_err(|error| format!("The GStreamer v4l2src plugin is not installed: {error}"))?;
     source.set_property("device", device.to_string_lossy().as_ref());
-    run_pipeline(source, path)
+    run_pipeline(source, path, true)
 }
 
-fn run_pipeline(source: gst::Element, path: &Path) -> Result<(), String> {
+fn run_pipeline(source: gst::Element, path: &Path, decode_bin: bool) -> Result<(), String> {
     let pipeline = gst::Pipeline::new();
-    let decode = gst::ElementFactory::make("decodebin")
-        .build()
-        .map_err(|error| format!("The GStreamer decodebin plugin is missing: {error}"))?;
     let convert = gst::ElementFactory::make("videoconvert")
         .build()
         .map_err(|error| format!("The GStreamer videoconvert plugin is missing: {error}"))?;
@@ -274,37 +277,69 @@ fn run_pipeline(source: gst::Element, path: &Path) -> Result<(), String> {
         source.set_property("num-buffers", 1);
     }
 
-    pipeline
-        .add_many([&source, &decode, &convert, &encode, &sink])
-        .map_err(|error| format!("Could not build the camera pipeline: {error}"))?;
-    source
-        .link(&decode)
-        .map_err(|error| format!("Could not link the camera source: {error}"))?;
+    if decode_bin {
+        let decode = gst::ElementFactory::make("decodebin")
+            .build()
+            .map_err(|error| format!("The GStreamer decodebin plugin is missing: {error}"))?;
+        pipeline
+            .add_many([&source, &decode, &convert, &encode, &sink])
+            .map_err(|error| format!("Could not build the camera pipeline: {error}"))?;
+        source
+            .link(&decode)
+            .map_err(|error| format!("Could not link the camera source: {error}"))?;
+        let convert_pad = convert.clone();
+        decode.connect_pad_added(move |_, pad| {
+            // Camera nodes are video-only in practice, but never link an audio
+            // pad into videoconvert if a device exposes one.
+            let caps = pad.query_caps(None);
+            let is_audio = caps
+                .structure(0)
+                .is_some_and(|structure| structure.name().starts_with("audio/"));
+            if is_audio {
+                return;
+            }
+            let Some(sink_pad) = convert_pad.static_pad("sink") else {
+                return;
+            };
+            if !sink_pad.is_linked() {
+                let _ = pad.link(&sink_pad);
+            }
+        });
+    } else {
+        pipeline
+            .add_many([&source, &convert, &encode, &sink])
+            .map_err(|error| format!("Could not build the camera pipeline: {error}"))?;
+        source
+            .link(&convert)
+            .map_err(|error| format!("Could not link the camera source: {error}"))?;
+    }
     gst::Element::link_many([&convert, &encode, &sink])
         .map_err(|error| format!("Could not link the camera pipeline: {error}"))?;
 
-    let convert_pad = convert.clone();
-    decode.connect_pad_added(move |_, pad| {
-        // Camera nodes are video-only in practice, but never link an audio
-        // pad into videoconvert if a device exposes one.
-        let caps = pad.query_caps(None);
-        let is_audio = caps
-            .structure(0)
-            .is_some_and(|structure| structure.name().starts_with("audio/"));
-        if is_audio {
-            return;
-        }
-        let Some(sink_pad) = convert_pad.static_pad("sink") else {
-            return;
-        };
-        if !sink_pad.is_linked() {
-            let _ = pad.link(&sink_pad);
-        }
-    });
-
-    pipeline
-        .set_state(gst::State::Playing)
-        .map_err(|error| format!("Could not start the camera: {error}"))?;
+    if let Err(error) = pipeline.set_state(gst::State::Playing) {
+        // The state-change error itself is generic; the actual reason (device
+        // busy, not-negotiated, PipeWire permission, missing plugin) is on the
+        // bus.
+        let detail = pipeline
+            .bus()
+            .and_then(|bus| {
+                bus.timed_pop_filtered(gst::ClockTime::from_seconds(2), &[gst::MessageType::Error])
+            })
+            .and_then(|message| match message.view() {
+                gst::MessageView::Error(error) => Some(match error.debug() {
+                    Some(debug) if !debug.is_empty() => {
+                        format!("{} ({debug})", error.error())
+                    }
+                    _ => error.error().to_string(),
+                }),
+                _ => None,
+            });
+        let _ = pipeline.set_state(gst::State::Null);
+        return Err(match detail {
+            Some(detail) => format!("Could not start the camera: {detail}"),
+            None => format!("Could not start the camera: {error}"),
+        });
+    }
 
     let bus = pipeline
         .bus()
