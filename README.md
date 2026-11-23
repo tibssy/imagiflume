@@ -123,9 +123,10 @@ Milestone 3 (packaged desktop app):
 - **camera capture**: the camera button in the composer grabs one frame from
   the first camera, adds it as a reference and shows it on the canvas. It uses
   the XDG camera portal, so the desktop asks for permission the first time and
-  the app can be toggled in **Settings → Privacy & Security → Camera**. Native
-  sessions without a camera portal fall back to V4L2; sandboxed builds always
-  go through the portal
+  the app can be toggled in **Settings → Privacy & Security → Camera**. The
+  portal session is reused, so consecutive photos do not wait for the camera to
+  reappear. Native sessions without a camera portal fall back to V4L2;
+  sandboxed builds always go through the portal
 - **session restore**: optionally reopen the last image and draft prompt on
   launch (**Preferences → General**, on by default)
 - **view-only zoom** with a bottom-right pill: zoom in/out, real-pixel scale

@@ -11,7 +11,8 @@
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use adw::prelude::*;
 use gstreamer as gst;
@@ -28,6 +29,23 @@ const BLOCKED_HINT: &str =
     "Camera access is blocked. Enable Imagiflume in Settings → Privacy & Security → Camera.";
 
 static GST_INIT: OnceLock<Result<(), String>> = OnceLock::new();
+/// Portal PipeWire remotes are expensive to set up and their fd numbers are
+/// reused by the kernel; GStreamer caches PipeWire cores by fd, so reopening a
+/// remote after every shot can hand back a stale core with no camera nodes.
+static PORTAL_FD: OnceLock<Mutex<Option<Arc<OwnedFd>>>> = OnceLock::new();
+static CAMERA_SESSION: OnceLock<Mutex<Option<CameraSession>>> = OnceLock::new();
+
+struct CameraSession {
+    fd: Arc<OwnedFd>,
+    provider: gst::DeviceProvider,
+}
+
+impl Drop for CameraSession {
+    fn drop(&mut self) {
+        self.provider.stop();
+        self.provider.set_property("fd", -1);
+    }
+}
 
 /// Initialise GStreamer once, preferably on the main thread.
 pub fn init() {
@@ -138,29 +156,55 @@ async fn capture_frame(path: &Path) -> Result<(), String> {
 ///
 /// `Ok(None)` is only returned when no camera portal exists; a denial is an
 /// error so that sandboxed builds never fall back to the raw device.
-async fn portal_fd() -> Result<Option<OwnedFd>, String> {
+fn cached_portal_fd() -> Option<Arc<OwnedFd>> {
+    PORTAL_FD
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+}
+
+async fn portal_fd() -> Result<Option<Arc<OwnedFd>>, String> {
     let camera = match ashpd::desktop::camera::Camera::new().await {
         Ok(camera) => camera,
         Err(_) => return Ok(None),
     };
-    let present = match camera.is_present().await {
-        Ok(present) => present,
-        // The portal frontend exists but its backend has no camera support.
-        Err(_) => return Ok(None),
-    };
-    if !present {
-        return Err("No camera found.".into());
+    if cached_portal_fd().is_none() {
+        let present = match camera.is_present().await {
+            Ok(present) => present,
+            // The portal frontend exists but its backend has no camera support.
+            Err(_) => return Ok(None),
+        };
+        if !present {
+            tracing::warn!("the camera portal reports no camera");
+            return Err("No camera found (portal).".into());
+        }
     }
 
+    // Re-check permission on every shot so a Settings toggle takes effect even
+    // with a cached PipeWire remote.
     let request = camera
         .request_access(Default::default())
         .await
         .map_err(portal_error)?;
     request.response().map_err(portal_error)?;
+
+    if let Some(fd) = cached_portal_fd() {
+        return Ok(Some(fd));
+    }
     let fd = camera
         .open_pipe_wire_remote(Default::default())
         .await
         .map_err(portal_error)?;
+    let fd = Arc::new(fd);
+    let mut cache = PORTAL_FD
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(existing) = cache.as_ref() {
+        return Ok(Some(existing.clone()));
+    }
+    *cache = Some(fd.clone());
     Ok(Some(fd))
 }
 
@@ -214,41 +258,68 @@ where
         .map_err(|_| "Camera capture stopped.".to_string())?
 }
 
-fn capture_pipewire(fd: OwnedFd, path: &Path) -> Result<(), String> {
-    ensure_gst()?;
+fn camera_provider(fd: &Arc<OwnedFd>) -> Result<gst::DeviceProvider, String> {
+    let mut session = CAMERA_SESSION
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(existing) = session.as_ref()
+        && Arc::ptr_eq(&existing.fd, fd)
+    {
+        return Ok(existing.provider.clone());
+    }
+    // A different portal remote replaces the old provider; dropping it stops
+    // the provider and releases its PipeWire core.
+    let _ = session.take();
+
     let provider =
         gst::DeviceProviderFactory::by_name("pipewiredeviceprovider").ok_or_else(|| {
             "The PipeWire GStreamer plugin is not installed. Install gst-plugin-pipewire."
                 .to_string()
         })?;
-
     provider.set_property("fd", fd.as_raw_fd());
     provider
         .start()
         .map_err(|error| format!("Could not start the camera provider: {error}"))?;
+    *session = Some(CameraSession {
+        fd: fd.clone(),
+        provider: provider.clone(),
+    });
+    Ok(provider)
+}
 
-    let result = (|| {
-        let device = provider
+fn capture_pipewire(fd: Arc<OwnedFd>, path: &Path) -> Result<(), String> {
+    ensure_gst()?;
+    let provider = camera_provider(&fd)?;
+
+    // The camera node can be briefly missing while the previous stream shuts
+    // down; a persistent provider usually has it, but give PipeWire a moment.
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let device = loop {
+        if let Some(device) = provider
             .devices()
             .into_iter()
             .find(|device| device.device_class().starts_with("Video"))
-            .ok_or_else(|| "No camera found.".to_string())?;
-        tracing::debug!(
-            camera = %device.display_name(),
-            class = %device.device_class(),
-            "capturing a camera frame"
-        );
-        let source = device
-            .create_element(None)
-            .map_err(|error| format!("Could not open the camera: {error}"))?;
-        // decodebin makes pipewiresrc fail target resolution on the host
-        // PipeWire 1.6 / WirePlumber 0.5 stack; videoconvert alone works.
-        run_pipeline(source, path, false)
-    })();
-
-    provider.stop();
-    provider.set_property("fd", -1);
-    result
+        {
+            break device;
+        }
+        if Instant::now() >= deadline {
+            tracing::warn!("the PipeWire provider returned no camera device");
+            return Err("No camera found (PipeWire).".to_string());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    tracing::debug!(
+        camera = %device.display_name(),
+        class = %device.device_class(),
+        "capturing a camera frame"
+    );
+    let source = device
+        .create_element(None)
+        .map_err(|error| format!("Could not open the camera: {error}"))?;
+    // decodebin makes pipewiresrc fail target resolution on the host
+    // PipeWire 1.6 / WirePlumber 0.5 stack; videoconvert alone works.
+    run_pipeline(source, path, false)
 }
 
 fn capture_v4l2(device: &Path, path: &Path) -> Result<(), String> {
@@ -373,6 +444,29 @@ fn run_pipeline(source: gst::Element, path: &Path, decode_bin: bool) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "opens the camera and needs portal permission"]
+    fn portal_repeat_probe() {
+        let _ = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .try_init();
+        let context = glib::MainContext::default();
+        for attempt in 0..4 {
+            let started = std::time::Instant::now();
+            let outcome = context.block_on(portal_fd());
+            match outcome {
+                Ok(Some(fd)) => {
+                    let path = std::env::temp_dir()
+                        .join(format!("imagiflume-camera-repeat-{attempt}.png"));
+                    let result = capture_pipewire(fd, &path);
+                    println!("attempt {attempt}: {result:?} in {:?}", started.elapsed());
+                }
+                Ok(None) => println!("attempt {attempt}: no portal"),
+                Err(error) => println!("attempt {attempt}: portal error: {error}"),
+            }
+        }
+    }
 
     #[test]
     fn portal_denial_points_at_settings() {
