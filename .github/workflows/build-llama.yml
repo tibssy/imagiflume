@@ -260,6 +260,9 @@ jobs:
     timeout-minutes: 180
     env:
       HIP_PATH: /opt/rocm
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Install git
         run: |
