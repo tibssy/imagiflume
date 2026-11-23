@@ -49,6 +49,8 @@ package() {
   install -Dm755 target/release/imagiflume "$pkgdir/usr/bin/imagiflume"
   install -Dm755 "$srcdir/stable-diffusion.cpp/build/bin/sd-server" \
     "$pkgdir/usr/lib/imagiflume/sd-server"
+  install -Dm755 "$srcdir/stable-diffusion.cpp/build/bin/sd-cli" \
+    "$pkgdir/usr/lib/imagiflume/sd-cli"
 
   install -Dm644 packaging/io.github.tibssy.Imagiflume.desktop \
     "$pkgdir/usr/share/applications/io.github.tibssy.Imagiflume.desktop"

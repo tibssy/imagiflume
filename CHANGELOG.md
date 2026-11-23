@@ -3,6 +3,14 @@
 All notable changes to Imagiflume. Alpha builds are test releases; expect
 rough edges.
 
+## Unreleased
+
+- **Upscaling on new backends**: stable-diffusion.cpp `3b12781` removed
+  `POST /sdcpp/v1/upscale`, so upscaling now falls back to
+  `sd-cli -M upscale` when the endpoint is missing. Older backends keep the
+  persistent model-less server. The Flatpak and Arch packages now ship
+  `sd-cli` alongside `sd-server`.
+
 ## 0.2.0-beta.2 — 2026-11-23
 
 - **Backend compatibility**: accept the `configured` state reported by
