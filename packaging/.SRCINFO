@@ -1,6 +1,6 @@
 pkgbase = imagiflume
 	pkgdesc = GTK4/libadwaita desktop app for local image generation with stable-diffusion.cpp
-	pkgver = 0.1.0
+	pkgver = 0.2.0beta1
 	pkgrel = 1
 	url = https://github.com/tibssy/imagiflume
 	arch = x86_64
@@ -16,11 +16,15 @@ pkgbase = imagiflume
 	depends = libadwaita
 	depends = hicolor-icon-theme
 	depends = openssl
+	depends = gstreamer
+	depends = gst-plugins-base
+	depends = gst-plugins-good
+	depends = gst-plugin-pipewire
 	optdepends = nvidia-utils: CUDA inference on NVIDIA GPUs
 	optdepends = llama.cpp: prompt improvement using the active text encoder
-	source = imagiflume-0.1.0.tar.gz
+	source = imagiflume-0.2.0-beta.1.tar.gz::https://github.com/tibssy/imagiflume/archive/refs/tags/v0.2.0-beta.1.tar.gz
 	source = stable-diffusion.cpp::git+https://github.com/leejet/stable-diffusion.cpp#commit=32d516c0197ed5ca31305b8575e14eb1451fad33
-	sha256sums = SKIP
+	sha256sums = 4ef7a8718b6bac8d509043288ab8f02e2df9610eba87e36c00f40259f74878ea
 	sha256sums = SKIP
 
 pkgname = imagiflume
