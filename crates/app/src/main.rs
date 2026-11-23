@@ -153,6 +153,7 @@ pub(crate) struct Ui {
     pub reference_button: gtk::Button,
     pub camera_button: gtk::Button,
     pub camera_busy: Cell<bool>,
+    pub camera_preview: RefCell<Option<camera::Preview>>,
     pub improve_button: gtk::Button,
     pub improving: Cell<bool>,
     /// Position while browsing prompt history; `None` is the live draft.
@@ -685,6 +686,7 @@ fn build_ui(app: &adw::Application) {
         reference_button: view.reference_button,
         camera_button: view.camera_button,
         camera_busy: Cell::new(false),
+        camera_preview: RefCell::new(None),
         improve_button: view.improve_button,
         improving: Cell::new(false),
         prompt_history_index: Cell::new(None),
@@ -929,7 +931,7 @@ fn wire_events(ui: &Rc<Ui>, preferences_button: &gtk::Button) {
     {
         let ui = ui.clone();
         let button = ui.camera_button.clone();
-        button.connect_clicked(move |_| camera::capture(&ui));
+        button.connect_clicked(move |_| camera::toggle(&ui));
     }
     {
         let ui = ui.clone();
@@ -1564,6 +1566,10 @@ fn wire_events(ui: &Rc<Ui>, preferences_button: &gtk::Button) {
         let ui = ui.clone();
         let split = ui.split.clone();
         key_controller.connect_key_pressed(move |_, key, _, state| {
+            if key == gdk::Key::Escape && ui.camera_preview.borrow().is_some() {
+                camera::cancel(&ui);
+                return glib::Propagation::Stop;
+            }
             if key == gdk::Key::Escape && ui.history_selection_mode.get() {
                 exit_selection_mode(&ui);
                 return glib::Propagation::Stop;
@@ -2205,6 +2211,7 @@ fn crossfade_to_texture(ui: &Rc<Ui>, texture: &gdk::Texture) {
 }
 
 pub(crate) fn update_image_view(ui: &Rc<Ui>) {
+    camera::forget(ui);
     transform::forget(ui);
     if ui.compare_button.is_active() {
         ui.compare_button.set_active(false);
@@ -2340,6 +2347,8 @@ pub(crate) fn show_composer(ui: &Rc<Ui>, show: bool) {
         ui.crop_button.set_active(false);
         set_crop_mode(ui, false);
         ui.effects_popover.popdown();
+    } else {
+        camera::forget(ui);
     }
     ui.composer.set_reveal_child(show);
     update_image_actions(ui);
@@ -2359,8 +2368,9 @@ pub(crate) fn update_image_actions(ui: &Rc<Ui>) {
     let zooming = ui.zooming.get();
     let classifying = ui.classifying.get();
     let foreground = zooming || classifying;
+    let camera_preview = ui.camera_preview.borrow().is_some();
     let position = history_position(ui);
-    let actions = has_image && !foreground;
+    let actions = has_image && !foreground && !camera_preview;
     let editable = actions && active_preset(ui).supports_edit;
     let navigation = has_image && !editing && !zooming && !classifying;
     // Only a live preview is unstable: a pinned history image stays fully
@@ -5461,11 +5471,33 @@ fn back_to_view(ui: &Rc<Ui>) {
     ui.status.set_text("Viewing image");
 }
 
-/// Show an image with a crossfade from the currently visible canvas image.
-/// Show a transformed image while keeping (or replacing) the reference set.
-///
-/// `fade_to_image` deliberately clears references for history browsing; a
-/// rotation or flip of a reference must preserve it instead.
+/// Prepare the canvas for the live camera picture.
+pub(crate) fn begin_camera_preview_view(ui: &Rc<Ui>) {
+    transform::forget(ui);
+    ui.transform_button.popdown();
+    ui.crop_button.set_active(false);
+    ui.effects_popover.popdown();
+    if ui.compare_button.is_active() {
+        ui.compare_button.set_active(false);
+    }
+    reset_zoom(ui);
+    update_image_actions(ui);
+}
+
+/// Paint one preview frame without the crossfade animation.
+pub(crate) fn show_camera_preview_frame(ui: &Rc<Ui>, texture: &gdk::Texture) {
+    let rounded = rounded_paintable::RoundedPaintable::new(texture);
+    match ui.stack.visible_child_name().as_deref() {
+        Some("back") => ui.picture_back.set_paintable(Some(&rounded)),
+        _ => {
+            ui.picture.set_paintable(Some(&rounded));
+            ui.stack.set_visible_child_name("image");
+        }
+    }
+    ui.image_size
+        .set((texture.width() as u32, texture.height() as u32));
+}
+
 /// Show a transform preview without touching the saved image or History.
 pub(crate) fn show_transform_preview(ui: &Rc<Ui>, texture: &gdk::Texture) {
     ui.image_size
@@ -5475,11 +5507,16 @@ pub(crate) fn show_transform_preview(ui: &Rc<Ui>, texture: &gdk::Texture) {
     update_image_actions(ui);
 }
 
+/// Show a transformed image while keeping (or replacing) the reference set.
+///
+/// `fade_to_image` deliberately clears references for history browsing; a
+/// rotation or flip of a reference must preserve it instead.
 pub(crate) fn show_image_with_references(
     ui: &Rc<Ui>,
     path: &Path,
     references: Vec<PathBuf>,
 ) -> bool {
+    camera::forget(ui);
     transform::forget(ui);
     if ui.compare_button.is_active() {
         ui.compare_button.set_active(false);
@@ -5511,6 +5548,7 @@ pub(crate) fn show_image_with_references(
 }
 
 pub(crate) fn fade_to_image(ui: &Rc<Ui>, path: &Path) -> bool {
+    camera::forget(ui);
     transform::forget(ui);
     if ui.compare_button.is_active() {
         ui.compare_button.set_active(false);

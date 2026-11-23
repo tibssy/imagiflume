@@ -32,7 +32,8 @@ jobs:
           apt-get install -y --no-install-recommends \
             build-essential ca-certificates curl git pkg-config \
             libgtk-4-dev libadwaita-1-dev libgdk-pixbuf-2.0-dev \
-            libglib2.0-dev libssl-dev libgstreamer1.0-dev
+            libglib2.0-dev libssl-dev libgstreamer1.0-dev \
+            libgstreamer-plugins-base1.0-dev
 
       - uses: actions/checkout@v4
 

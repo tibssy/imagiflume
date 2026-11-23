@@ -29,10 +29,13 @@ rough edges.
   **Settings → Privacy & Security → Camera**, and a denial points at that
   setting instead of silently opening the device. Frames are read from the
   portal's PipeWire stream with GStreamer, which also removes the `ffmpeg`
-  requirement. The portal remote and its GStreamer provider stay alive between
-  shots, so repeated captures no longer hit a transient "No camera found".
-  The Flatpak now requests `--device=dri` instead of the broad `--device=all`;
-  native sessions without a camera portal keep the V4L2 fallback.
+  requirement. The camera button now opens a live preview; a second press saves
+  the current frame, adds it as a reference and releases the camera, while
+  **Esc** closes the preview. The portal remote and its GStreamer provider stay
+  alive between shots, so repeated captures no longer hit a transient
+  "No camera found". The Flatpak now requests `--device=dri` instead of the
+  broad `--device=all`; native sessions without a camera portal keep the V4L2
+  fallback.
 - **Diagnostics**: About now shows detected hardware and the backend log paths,
   including a new persistent `llama-cli.log`, with an open-log button and a
   **Copy diagnostics** action that includes the version, channel, locale, GPU,

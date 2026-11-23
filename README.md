@@ -120,13 +120,15 @@ Milestone 3 (packaged desktop app):
 - **prompt history**: the history button in the composer toolbar lists
   saved prompts, and `Alt+Up` / `Alt+Down` recall them while keeping the draft
   you were writing
-- **camera capture**: the camera button in the composer grabs one frame from
-  the first camera, adds it as a reference and shows it on the canvas. It uses
-  the XDG camera portal, so the desktop asks for permission the first time and
-  the app can be toggled in **Settings → Privacy & Security → Camera**. The
-  portal session is reused, so consecutive photos do not wait for the camera to
-  reappear. Native sessions without a camera portal fall back to V4L2;
-  sandboxed builds always go through the portal
+- **camera capture**: the camera button in the composer opens a live preview.
+  The button turns into a capture control; a second press saves the current
+  frame as a reference, shows it on the canvas and releases the camera.
+  **Esc** closes the preview without saving. It uses the XDG camera portal, so
+  the desktop asks for permission the first time and the app can be toggled in
+  **Settings → Privacy & Security → Camera**. The portal session is reused, so
+  consecutive previews do not wait for the camera to reappear. Native sessions
+  without a camera portal fall back to a one-shot V4L2 grab; sandboxed builds
+  always go through the portal
 - **session restore**: optionally reopen the last image and draft prompt on
   launch (**Preferences → General**, on by default)
 - **view-only zoom** with a bottom-right pill: zoom in/out, real-pixel scale
@@ -305,7 +307,7 @@ without leaving the app.
 | Reorder waiting jobs | up/down arrows on a waiting queue row |
 | Duplicate a queued prompt | copy button on a waiting queue row |
 | Recall a previous prompt | history button in the composer, or `Alt+Up` / `Alt+Down` |
-| Take a photo | camera button in the composer (asks for camera permission on first use) |
+| Take a photo | camera button in the composer: first press previews, second captures (asks for permission on first use) |
 | Choose LoRAs | **LoRAs…** in the sidebar |
 | Improve the prompt | ✨ button in the prompt field (needs `llama-cli`) |
 | New random seed | shuffle button next to the seed field |

@@ -19,6 +19,7 @@ imagiflume-core = { path = "../core" }
 imagiflume-models = { path = "../models" }
 glib.workspace = true
 gstreamer.workspace = true
+gstreamer-app.workspace = true
 gtk.workspace = true
 image.workspace = true
 rusqlite.workspace = true
