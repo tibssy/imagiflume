@@ -140,15 +140,6 @@ impl History {
         Ok((self.conn.last_insert_rowid(), parent_id))
     }
 
-    /// Store a generated display title. An empty title clears it.
-    pub fn set_title(&self, id: i64, title: &str) -> Result<()> {
-        self.conn.execute(
-            "UPDATE generations SET title = ?1 WHERE id = ?2",
-            params![title, id],
-        )?;
-        Ok(())
-    }
-
     /// Latest recorded entry for an image path, if it is still in the library.
     pub fn find_by_image_path(&self, image_path: &str) -> Result<Option<Generation>> {
         let sql = format!(
@@ -617,13 +608,10 @@ mod tests {
     #[test]
     fn stores_generated_titles_and_finds_entries_by_path() {
         let history = History::open_in_memory().unwrap();
-        let id = history
-            .insert(&sample("a red fox", "flux2-klein-4b"))
-            .unwrap()
-            .0;
-        assert_eq!(history.recent(1).unwrap()[0].title, "");
+        let mut generation = sample("a red fox", "flux2-klein-4b");
+        generation.title = "Autumn Fox";
+        history.insert(&generation).unwrap();
 
-        history.set_title(id, "Autumn Fox").unwrap();
         let entry = history.find_by_image_path("/tmp/a.png").unwrap().unwrap();
         assert_eq!(entry.title, "Autumn Fox");
         assert_eq!(entry.display_name(), "Autumn Fox");

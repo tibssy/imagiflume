@@ -1,21 +1,24 @@
-//! Rotate and flip the image on the canvas.
+//! Previewed rotate/flip operations.
 //!
-//! A recorded image becomes a new history entry, so the transform joins the
-//! chain like an adjustment. A reference that is only a cache copy is written
-//! back into the reference set instead, keeping the edit workflow intact.
+//! The transform popover only changes what is on the canvas; the image and
+//! History are untouched until the checkmark is pressed. A recorded image then
+//! becomes a new history entry, while a cache-only reference is replaced in the
+//! reference set.
 
 use std::path::Path;
 use std::rc::Rc;
 use std::time::Instant;
 
-use gtk::prelude::ToggleButtonExt;
+use gtk::gdk;
+use gtk::glib;
+use gtk::prelude::*;
 use image::{DynamicImage, GenericImageView};
 use imagiflume_core::paths;
 
 use crate::history::{Generation, NewGeneration};
 use crate::{
-    Ui, annotate_image, history_view, now_millis, reload_history, show_image_with_references,
-    unix_seconds, write_thumbnail,
+    Ui, annotate_image, history_view, naming, now_millis, reload_history,
+    show_image_with_references, show_transform_preview, unix_seconds, write_thumbnail,
 };
 
 #[derive(Clone, Copy)]
@@ -38,48 +41,87 @@ impl Transform {
 
     fn label(self) -> &'static str {
         match self {
-            Self::RotateLeft => "Rotated 90° left",
-            Self::RotateRight => "Rotated 90° right",
-            Self::FlipHorizontal => "Flipped horizontally",
-            Self::FlipVertical => "Flipped vertically",
-        }
-    }
-
-    fn slug(self) -> &'static str {
-        match self {
-            Self::RotateLeft => "rotated-left",
-            Self::RotateRight => "rotated-right",
-            Self::FlipHorizontal => "flipped-horizontal",
-            Self::FlipVertical => "flipped-vertical",
+            Self::RotateLeft => "Rotated -90",
+            Self::RotateRight => "Rotated +90",
+            Self::FlipHorizontal => "Flipped horizontal",
+            Self::FlipVertical => "Flipped vertical",
         }
     }
 }
 
-pub(crate) fn apply(ui: &Rc<Ui>, transform: Transform) {
-    if (ui.generating.get() && !ui.upscaling.get()) || ui.zooming.get() || ui.classifying.get() {
-        return;
+pub(crate) struct Preview {
+    source: std::path::PathBuf,
+    current: DynamicImage,
+    operations: Vec<Transform>,
+}
+
+/// Start a preview session when the popover opens.
+pub(crate) fn begin(ui: &Rc<Ui>) -> bool {
+    if ui.transform_preview.borrow().is_some() {
+        return true;
     }
     let Some(source) = ui.state.borrow().display.clone() else {
-        ui.toast
-            .add_toast(adw::Toast::new("No image to rotate or flip."));
-        return;
+        ui.transform_apply_button.set_sensitive(false);
+        return false;
     };
-    ui.crop_button.set_active(false);
-
-    let started = Instant::now();
     let image = match image::open(&source) {
         Ok(image) => image,
         Err(error) => {
             tracing::warn!(%error, path = %source.display(), "failed to open image for transform");
             ui.toast
                 .add_toast(adw::Toast::new("Could not read this image."));
-            return;
+            return false;
         }
     };
-    let transformed = transform.apply(image);
-    let (width, height) = transformed.dimensions();
+    *ui.transform_preview.borrow_mut() = Some(Preview {
+        source,
+        current: image,
+        operations: Vec::new(),
+    });
+    ui.transform_apply_button.set_sensitive(false);
+    true
+}
 
-    let source_text = source.to_string_lossy().into_owned();
+/// Apply one transform to the canvas preview only.
+pub(crate) fn preview(ui: &Rc<Ui>, transform: Transform) {
+    if ui.transform_preview.borrow().is_none() && !begin(ui) {
+        return;
+    }
+    let (texture, label) = {
+        let mut guard = ui.transform_preview.borrow_mut();
+        let Some(preview) = guard.as_mut() else {
+            return;
+        };
+        let current = std::mem::replace(&mut preview.current, DynamicImage::new_rgba8(1, 1));
+        preview.current = transform.apply(current);
+        preview.operations.push(transform);
+        (texture_for(&preview.current), transform.label())
+    };
+    show_transform_preview(ui, &texture);
+    ui.transform_apply_button.set_sensitive(true);
+    ui.status.set_text(&format!("Preview · {label}"));
+}
+
+/// Save the previewed image and add it to History (or the reference set).
+pub(crate) fn commit(ui: &Rc<Ui>) {
+    let Some(preview) = ui.transform_preview.borrow_mut().take() else {
+        return;
+    };
+    ui.transform_apply_button.set_sensitive(false);
+    if preview.operations.is_empty()
+        || ui.state.borrow().display.as_deref() != Some(preview.source.as_path())
+    {
+        return;
+    }
+
+    let suffix = preview
+        .operations
+        .iter()
+        .map(|operation| operation.label())
+        .collect::<Vec<_>>()
+        .join(" + ");
+    let title = naming::derived(ui, &preview.source, &suffix);
+    let source_text = preview.source.to_string_lossy().into_owned();
     let source_entry = ui
         .history
         .borrow()
@@ -87,17 +129,14 @@ pub(crate) fn apply(ui: &Rc<Ui>, transform: Transform) {
         .ok()
         .flatten();
 
-    let output = match &source_entry {
-        Some(_) => {
-            let output_dir = ui.config.borrow().output_dir.clone();
-            let stem = output_stem(&source);
-            output_dir.join(format!("{stem}-{}-{}.png", transform.slug(), now_millis()))
-        }
-        None => paths::cache_dir().join("transforms").join(format!(
-            "{}-{}.png",
-            transform.slug(),
-            now_millis()
-        )),
+    let started = Instant::now();
+    let output = if source_entry.is_some() {
+        let output_dir = ui.config.borrow().output_dir.clone();
+        naming::unique_output_path(&output_dir, &title)
+    } else {
+        paths::cache_dir()
+            .join("transforms")
+            .join(format!("transform-{}.png", now_millis()))
     };
     if let Some(parent) = output.parent()
         && let Err(error) = std::fs::create_dir_all(parent)
@@ -107,23 +146,23 @@ pub(crate) fn apply(ui: &Rc<Ui>, transform: Transform) {
             .add_toast(adw::Toast::new("Could not save the transformed image."));
         return;
     }
-    if let Err(error) = transformed.save(&output) {
+    if let Err(error) = preview.current.save(&output) {
         tracing::error!(%error, path = %output.display(), "failed to save transform");
         ui.toast
             .add_toast(adw::Toast::new("Could not save the transformed image."));
         return;
     }
     let duration_ms = started.elapsed().as_millis() as i64;
+    let (width, height) = preview.current.dimensions();
 
     let mut references = ui.state.borrow().references.clone();
     for reference in &mut references {
-        if *reference == source {
+        if *reference == preview.source {
             *reference = output.clone();
         }
     }
 
-    let shown = show_image_with_references(ui, &output, references);
-    if !shown {
+    if !show_image_with_references(ui, &output, references) {
         ui.toast
             .add_toast(adw::Toast::new("Could not show the transformed image."));
         return;
@@ -134,7 +173,7 @@ pub(crate) fn apply(ui: &Rc<Ui>, transform: Transform) {
             ui,
             &source_text,
             &output,
-            transform,
+            &title,
             &entry,
             duration_ms,
             (width, height),
@@ -143,30 +182,41 @@ pub(crate) fn apply(ui: &Rc<Ui>, transform: Transform) {
 
     ui.undo.borrow_mut().clear();
     ui.status
-        .set_text(&format!("{} · {width} × {height}", transform.label()));
-    ui.toast
-        .add_toast(adw::Toast::new(&format!("{}.", transform.label())));
+        .set_text(&format!("{} · {width} × {height}", suffix));
+    ui.toast.add_toast(adw::Toast::new(&format!("{suffix}.")));
+    ui.transform_button.popdown();
+}
+
+/// Restore the original image when the popover closes without applying.
+pub(crate) fn cancel(ui: &Rc<Ui>) {
+    let preview = ui.transform_preview.borrow_mut().take();
+    ui.transform_apply_button.set_sensitive(false);
+    if preview.is_some_and(|preview| !preview.operations.is_empty()) {
+        ui.status.set_text("Transform cancelled");
+        crate::update_image_view(ui);
+    }
+}
+
+/// Discard a preview because the canvas is changing for another reason.
+pub(crate) fn forget(ui: &Ui) {
+    ui.transform_preview.borrow_mut().take();
+    ui.transform_apply_button.set_sensitive(false);
 }
 
 fn record_transform(
     ui: &Rc<Ui>,
     source_text: &str,
     output: &Path,
-    transform: Transform,
+    title: &str,
     source_entry: &Generation,
     duration_ms: i64,
     (width, height): (u32, u32),
 ) {
-    let title = if source_entry.title.trim().is_empty() {
-        String::new()
-    } else {
-        format!("{} · {}", transform.label(), source_entry.title)
-    };
     let image_text = output.to_string_lossy().into_owned();
     let created_at = unix_seconds();
     let inserted = ui.history.borrow().insert(&NewGeneration {
-        prompt: transform.label(),
-        title: &title,
+        prompt: title,
+        title,
         model: &source_entry.model,
         style: "none",
         width,
@@ -189,8 +239,8 @@ fn record_transform(
             }
             let entry = Generation {
                 id,
-                prompt: transform.label().into(),
-                title,
+                prompt: title.into(),
+                title: title.into(),
                 model: source_entry.model.clone(),
                 style: "none".into(),
                 width,
@@ -215,20 +265,18 @@ fn record_transform(
     }
 }
 
-fn output_stem(source: &Path) -> String {
-    let stem: String = source
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or("image")
-        .chars()
-        .filter(|character| character.is_alphanumeric() || matches!(character, '-' | '_'))
-        .take(48)
-        .collect();
-    if stem.is_empty() {
-        "image".into()
-    } else {
-        stem
-    }
+fn texture_for(image: &DynamicImage) -> gdk::Texture {
+    let rgba = image.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    let bytes = glib::Bytes::from_owned(rgba.into_raw());
+    gdk::MemoryTexture::new(
+        width as i32,
+        height as i32,
+        gdk::MemoryFormat::R8g8b8a8,
+        &bytes,
+        (width * 4) as usize,
+    )
+    .upcast()
 }
 
 #[cfg(test)]

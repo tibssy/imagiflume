@@ -13,6 +13,7 @@ adw.workspace = true
 anyhow.workspace = true
 ashpd.workspace = true
 async-channel.workspace = true
+futures-util.workspace = true
 imagiflume-backend-sdcpp = { path = "../backend-sdcpp" }
 imagiflume-core = { path = "../core" }
 imagiflume-models = { path = "../models" }

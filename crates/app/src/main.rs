@@ -7,6 +7,7 @@ mod history;
 mod history_view;
 mod lora;
 mod main_view;
+mod naming;
 mod preferences;
 mod prompt_ai;
 mod queue;
@@ -99,6 +100,9 @@ pub(crate) struct Ui {
     pub variation_button: gtk::Button,
     pub adjust_button: gtk::Button,
     pub transform_button: gtk::MenuButton,
+    pub transform_popover: gtk::Popover,
+    pub transform_apply_button: gtk::Button,
+    pub transform_preview: RefCell<Option<transform::Preview>>,
     pub rotate_left_button: gtk::Button,
     pub rotate_right_button: gtk::Button,
     pub flip_horizontal_button: gtk::Button,
@@ -633,6 +637,9 @@ fn build_ui(app: &adw::Application) {
         variation_button: view.variation_button,
         adjust_button: view.adjust_button,
         transform_button: view.transform_button,
+        transform_popover: view.transform_popover,
+        transform_apply_button: view.transform_apply_button,
+        transform_preview: RefCell::new(None),
         rotate_left_button: view.rotate_left_button,
         rotate_right_button: view.rotate_right_button,
         flip_horizontal_button: view.flip_horizontal_button,
@@ -1278,7 +1285,24 @@ fn wire_events(ui: &Rc<Ui>, preferences_button: &gtk::Button) {
         ),
     ] {
         let ui = ui.clone();
-        button.connect_clicked(move |_| transform::apply(&ui, operation));
+        button.connect_clicked(move |_| transform::preview(&ui, operation));
+    }
+    {
+        let button = ui.transform_apply_button.clone();
+        let ui = ui.clone();
+        button.connect_clicked(move |_| transform::commit(&ui));
+    }
+    {
+        let popover = ui.transform_popover.clone();
+        let ui = ui.clone();
+        popover.connect_show(move |_| {
+            transform::begin(&ui);
+        });
+    }
+    {
+        let popover = ui.transform_popover.clone();
+        let ui = ui.clone();
+        popover.connect_closed(move |_| transform::cancel(&ui));
     }
     {
         let ui = ui.clone();
@@ -2181,6 +2205,7 @@ fn crossfade_to_texture(ui: &Rc<Ui>, texture: &gdk::Texture) {
 }
 
 pub(crate) fn update_image_view(ui: &Rc<Ui>) {
+    transform::forget(ui);
     if ui.compare_button.is_active() {
         ui.compare_button.set_active(false);
     }
@@ -2978,7 +3003,14 @@ fn import_image(ui: &Rc<Ui>, path: PathBuf) {
             .add_toast(adw::Toast::new("Could not create the output folder."));
         return;
     }
-    let output = output_dir.join(format!("imported-{}.png", now_millis()));
+    let title: String = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(|stem| stem.trim())
+        .filter(|stem| !stem.is_empty())
+        .map(|stem| stem.chars().take(80).collect())
+        .unwrap_or_else(|| "Imported image".to_string());
+    let output = naming::unique_output_path(&output_dir, &title);
     if let Err(error) = image.save(&output) {
         tracing::error!(%error, path = %output.display(), "failed to save an imported image");
         ui.toast
@@ -2988,16 +3020,9 @@ fn import_image(ui: &Rc<Ui>, path: PathBuf) {
 
     let created_at = unix_seconds();
     let image_text = output.to_string_lossy().into_owned();
-    let title: String = path
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .map(|stem| stem.trim())
-        .filter(|stem| !stem.is_empty())
-        .map(|stem| stem.chars().take(80).collect())
-        .unwrap_or_else(|| "Imported image".to_string());
     let inserted = ui.history.borrow().insert(&NewGeneration {
         prompt: &title,
-        title: "",
+        title: &title,
         model: "import",
         style: "none",
         width,
@@ -3020,8 +3045,8 @@ fn import_image(ui: &Rc<Ui>, path: PathBuf) {
             }
             let entry = Generation {
                 id,
-                prompt: title,
-                title: String::new(),
+                prompt: title.clone(),
+                title,
                 model: "import".into(),
                 style: "none".into(),
                 width,
@@ -4029,6 +4054,11 @@ fn generate(
                 reference_paths: references.clone(),
                 source_path: source_path.clone(),
                 seed_text: seed_text.clone(),
+                title_task: if references.is_empty() && mode == GenerationMode::Generate {
+                    naming::text_to_image_title_task(ui, model, &base_prompt)
+                } else {
+                    None
+                },
             }),
             temp_dir: reference_dir,
         };
@@ -4102,6 +4132,13 @@ pub(crate) fn duplicate_job(ui: &Rc<Ui>, id: u64) {
             reference_paths: generate.reference_paths.clone(),
             source_path: generate.source_path.clone(),
             seed_text: generate.seed_text.clone(),
+            title_task: if generate.reference_paths.is_empty()
+                && generate.mode == GenerationMode::Generate
+            {
+                naming::text_to_image_title_task(ui, generate.model, &generate.prompt)
+            } else {
+                None
+            },
         }),
         temp_dir: reference_dir,
     };
@@ -4215,6 +4252,9 @@ fn start_generation_job(ui: &Rc<Ui>, job: queue::Job, request: GenerateRequest) 
             .ok()
             .map(|meta| meta.len())
     });
+    let mut title_task = job
+        .generate()
+        .and_then(|generate| generate.title_task.clone());
     let (sender, receiver) = async_channel::unbounded();
     if ui.worker.jobs.send_blocking((request, sender)).is_err() {
         tracing::error!("generation worker is unavailable");
@@ -4276,8 +4316,17 @@ fn start_generation_job(ui: &Rc<Ui>, job: queue::Job, request: GenerateRequest) 
                     break;
                 }
                 Progress::Done(path) => {
+                    let title = match job.generate() {
+                        Some(generate) if generate.reference_paths.is_empty() => {
+                            let fallback = naming::fallback_title(&generate.prompt);
+                            naming::await_title(title_task.take(), fallback).await
+                        }
+                        Some(generate) => naming::generation_title(&ui, generate),
+                        None => String::new(),
+                    };
+                    let path = naming::rename_to_title(&path, &title);
                     let duration_ms = started.elapsed().as_millis() as i64;
-                    complete_job(&ui, &job, Outcome::Done(path), duration_ms);
+                    complete_job(&ui, &job, Outcome::Done(path, title), duration_ms);
                     finished = true;
                     break;
                 }
@@ -4366,7 +4415,7 @@ fn start_upscale_job(ui: &Rc<Ui>, job: queue::Job) {
 }
 
 enum Outcome {
-    Done(PathBuf),
+    Done(PathBuf, String),
     Failed(String),
     Cancelled,
 }
@@ -4384,7 +4433,7 @@ fn complete_job(ui: &Rc<Ui>, job: &queue::Job, outcome: Outcome, duration_ms: i6
     }
 
     match outcome {
-        Outcome::Done(path) => {
+        Outcome::Done(path, title) => {
             let image_path = path.to_string_lossy().into_owned();
             let follow_live = ui.live_view.get();
 
@@ -4415,7 +4464,8 @@ fn complete_job(ui: &Rc<Ui>, job: &queue::Job, outcome: Outcome, duration_ms: i6
                 update_image_actions(ui);
             }
 
-            let history_id = record_history(ui, generate, &image_path, duration_ms, follow_live);
+            let history_id =
+                record_history(ui, generate, &image_path, &title, duration_ms, follow_live);
             copy_result_to_clipboard(ui, &path);
             // Do not overwrite the seed field while more jobs are waiting: it
             // belongs to the next composition, not to this result.
@@ -4540,6 +4590,7 @@ fn record_upscale(
     ui: &Rc<Ui>,
     job: &queue::Job,
     image: &UpscaledImage,
+    title: &str,
     duration_ms: i64,
     follow_live: bool,
 ) -> Option<i64> {
@@ -4552,7 +4603,7 @@ fn record_upscale(
 
     let inserted = ui.history.borrow().insert(&NewGeneration {
         prompt: &prompt,
-        title: "",
+        title,
         model: model_id,
         style: "none",
         width: image.width,
@@ -4576,7 +4627,7 @@ fn record_upscale(
             let entry = Generation {
                 id,
                 prompt: prompt.clone(),
-                title: String::new(),
+                title: title.to_string(),
                 model: model_id.to_string(),
                 style: "none".into(),
                 width: image.width,
@@ -4624,9 +4675,19 @@ fn complete_upscale(
 
     match result {
         Ok(image) => {
+            let mut image = image;
+            let suffix = format!("Upscaled {}x", upscale.factor);
+            let source = upscale
+                .source_path
+                .as_deref()
+                .map(Path::new)
+                .unwrap_or_else(|| Path::new(""));
+            let title = naming::derived(ui, source, &suffix);
+            image.path = naming::rename_to_title(&image.path, &title);
+
             let follow_live = ui.live_view.get();
             ui.undo.borrow_mut().clear();
-            let history_id = record_upscale(ui, job, &image, duration_ms, follow_live);
+            let history_id = record_upscale(ui, job, &image, &title, duration_ms, follow_live);
             copy_result_to_clipboard(ui, &image.path);
             ui.toast.add_toast(adw::Toast::new(&format!(
                 "Upscaled to {} × {}.",
@@ -4689,6 +4750,7 @@ fn record_history(
     ui: &Rc<Ui>,
     generate: &queue::GenerateJob,
     image_path: &str,
+    title: &str,
     duration_ms: i64,
     follow_live: bool,
 ) -> Option<i64> {
@@ -4699,7 +4761,7 @@ fn record_history(
 
     let inserted = ui.history.borrow().insert(&NewGeneration {
         prompt: &generate.prompt,
-        title: "",
+        title,
         model: generate.model.id,
         style: &generate.style,
         width: generate.width,
@@ -4723,7 +4785,7 @@ fn record_history(
             let entry = Generation {
                 id,
                 prompt: generate.prompt.clone(),
-                title: String::new(),
+                title: title.to_string(),
                 model: generate.model.id.to_string(),
                 style: generate.style.clone(),
                 width: generate.width,
@@ -4754,7 +4816,6 @@ fn record_history(
                 history_view::highlight(ui, &display);
             }
             update_image_actions(ui);
-            request_title(ui, &entry);
             Some(id)
         }
         Err(error) => {
@@ -4762,54 +4823,6 @@ fn record_history(
             None
         }
     }
-}
-
-/// Ask llama.cpp for a short display title after a generation.
-///
-/// The prompt stays the source of truth; a missing helper, a model without a
-/// usable text encoder, or a failed run simply leaves the title empty and the
-/// history row keeps showing the prompt.
-fn request_title(ui: &Rc<Ui>, entry: &Generation) {
-    if entry.kind != "generate" || entry.prompt.trim().is_empty() {
-        return;
-    }
-    let Some(cli) = prompt_ai::find_cli(&ui.config.borrow()) else {
-        return;
-    };
-    let Some(encoder) = title_encoder(ui, &entry.model) else {
-        return;
-    };
-    if !encoder.exists() {
-        return;
-    }
-
-    let id = entry.id;
-    let prompt = entry.prompt.clone();
-    let (sender, receiver) = async_channel::bounded(1);
-    std::thread::spawn(move || {
-        let _ = sender.send_blocking(prompt_ai::title(&prompt, &encoder, &cli));
-    });
-
-    let ui = ui.clone();
-    glib::spawn_future_local(async move {
-        let Ok(Ok(title)) = receiver.recv().await else {
-            tracing::debug!("history title generation failed");
-            return;
-        };
-        if let Err(error) = ui.history.borrow().set_title(id, &title) {
-            tracing::warn!(%error, "failed to store the history title");
-            return;
-        }
-        reload_history(&ui, true);
-    });
-}
-
-fn title_encoder(ui: &Ui, model_id: &str) -> Option<PathBuf> {
-    ui.config.borrow().prompt_helper_model.clone().or_else(|| {
-        preset(model_id)
-            .and_then(|preset| preset.llm_encoder())
-            .map(|file| ui.models_dir.join(file.rel_path))
-    })
 }
 
 /// Report LoRAs the server refused to register.
@@ -5453,11 +5466,21 @@ fn back_to_view(ui: &Rc<Ui>) {
 ///
 /// `fade_to_image` deliberately clears references for history browsing; a
 /// rotation or flip of a reference must preserve it instead.
+/// Show a transform preview without touching the saved image or History.
+pub(crate) fn show_transform_preview(ui: &Rc<Ui>, texture: &gdk::Texture) {
+    ui.image_size
+        .set((texture.width() as u32, texture.height() as u32));
+    crossfade_to_texture(ui, texture);
+    reset_zoom(ui);
+    update_image_actions(ui);
+}
+
 pub(crate) fn show_image_with_references(
     ui: &Rc<Ui>,
     path: &Path,
     references: Vec<PathBuf>,
 ) -> bool {
+    transform::forget(ui);
     if ui.compare_button.is_active() {
         ui.compare_button.set_active(false);
     }
@@ -5488,6 +5511,7 @@ pub(crate) fn show_image_with_references(
 }
 
 pub(crate) fn fade_to_image(ui: &Rc<Ui>, path: &Path) -> bool {
+    transform::forget(ui);
     if ui.compare_button.is_active() {
         ui.compare_button.set_active(false);
     }

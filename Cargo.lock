@@ -1375,6 +1375,7 @@ dependencies = [
  "anyhow",
  "ashpd",
  "async-channel",
+ "futures-util",
  "glib",
  "gstreamer",
  "gtk4",

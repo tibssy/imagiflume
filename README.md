@@ -100,14 +100,17 @@ Milestone 3 (packaged desktop app):
 - **manual adjustments** with brightness, contrast and saturation sliders and
   a live canvas preview; saving writes a new PNG that joins the history chain
   without re-running the model
-- **rotate and flip**: the transform menu over the canvas rotates 90° left or
-  right and flips horizontally or vertically. It works on generated images and
-  references; a recorded image joins the history chain, while a cache-only
-  reference is replaced in the reference set
-- **history titles**: after a generation, `llama-cli` writes a short title when
-  the active model has a usable language encoder, and the history row uses it;
-  the row falls back to the prompt when the helper is unavailable. Imported
-  images keep their file name
+- **rotate and flip**: the transform menu over the canvas previews 90° left or
+  right rotations and horizontal or vertical flips; the checkmark saves the
+  result. It works on generated images and references. A recorded image joins
+  the history chain, while a cache-only reference is replaced in the reference
+  set
+- **history titles**: after a generation, `llama-cli` writes a short base title
+  when the active model has a usable language encoder; without the helper a
+  short title is derived from the first clause of the prompt. Derived images
+  append a suffix such as `- Upscaled 2x`, `- Rotated +90`,
+  `- Brightness +28` or the effect name, and the PNG file name uses the same
+  title. Imported images keep their file name
 - **batch and variations**: **Batch** in the sidebar queues 1–4 images with
   consecutive seeds, and the shuffle button over the canvas re-runs the
   displayed prompt with seed + 1

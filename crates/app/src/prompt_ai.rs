@@ -24,7 +24,9 @@ the scene. Keep it under 60 words. Return only the improved prompt wrapped in \
 
 const TITLE_PROMPT: &str = "\
 Write a short, descriptive title for an image from the user's generation prompt. \
-Use 2 to 6 words, no quotes and no trailing punctuation. Return only the title.";
+Use 2 to 6 words, no quotes and no trailing punctuation. Do not mention loading, \
+models, prompts or instructions. Return only the title wrapped in <title> and \
+</title> tags.";
 
 const TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_TOKENS: u32 = 220;
@@ -111,6 +113,15 @@ pub(crate) fn title(prompt: &str, encoder: &Path, cli: &Path) -> Result<String> 
 
     let stdout = run_command(build_title_command(cli, encoder, prompt), TITLE_TIMEOUT)?;
     let title = parse_title(&stdout).ok_or_else(|| anyhow!("the model did not return a title"))?;
+    // Some text encoders echo a truncated prompt instead of titling the image.
+    if title.split_whitespace().count() >= 4
+        && prompt
+            .trim()
+            .to_lowercase()
+            .starts_with(&title.to_lowercase())
+    {
+        bail!("the model echoed the prompt instead of titling it");
+    }
     cache.insert(key, title.clone());
     Ok(title)
 }
@@ -250,19 +261,61 @@ fn build_title_command(cli: &Path, encoder: &Path, prompt: &str) -> Command {
         .arg("--temp")
         .arg("0.3")
         .arg("-t")
-        .arg(threads().to_string())
+        // Title runs in the background; keep them gentle on CPU-only rigs.
+        .arg(threads().min(2).to_string())
         .arg("--simple-io");
     command
 }
 
 fn parse_title(stdout: &str) -> Option<String> {
     let text = strip_ansi(stdout);
-    let line = text.lines().map(str::trim).find(|line| !line.is_empty())?;
+
+    let candidate = if let Some(start) = text.find("<title>") {
+        let rest = &text[start + "<title>".len()..];
+        let end = rest
+            .find("</title>")
+            .or_else(|| rest.find("\n[ Prompt:"))
+            .unwrap_or(rest.len());
+        rest[..end].trim()
+    } else {
+        // Without tags, skip llama-cli's loading/benchmark chatter and use the
+        // last meaningful line, which is where the answer appears.
+        let mut answer = "";
+        for line in text.lines().map(str::trim) {
+            let lower = line.to_lowercase();
+            if line.is_empty()
+                || lower.starts_with("loading")
+                || lower.starts_with("load ")
+                || lower.starts_with("llama_")
+                || lower.starts_with("llama.")
+                || lower.starts_with("ggml")
+                || lower.starts_with("build:")
+                || lower.starts_with("main:")
+                || lower.starts_with("system_info")
+                || lower.starts_with("print_info")
+                || lower.starts_with("common_")
+                || lower.starts_with("using ")
+                || lower.starts_with("available ")
+                || lower.starts_with("exiting")
+                || lower.starts_with("[ prompt")
+                || lower.starts_with("[ generation")
+            {
+                continue;
+            }
+            answer = line;
+        }
+        answer
+    };
+
+    let line = candidate.trim().trim_start_matches('>').trim();
     let line = line
         .strip_prefix("Title:")
         .or_else(|| line.strip_prefix("title:"))
         .unwrap_or(line)
         .trim();
+    let line = line.trim();
+    // Drop leaked control tokens such as </s>.
+    let line = line.split('<').next().unwrap_or(line).trim();
     let line = line
         .trim_matches(|c: char| {
             matches!(
@@ -279,10 +332,17 @@ fn parse_title(stdout: &str) -> Option<String> {
     let title = title
         .trim_end_matches(['.', ',', ';', ':', '!', '?'])
         .trim();
+    let lower = title.to_lowercase();
     if title.chars().count() < 2
         || title.chars().count() > 80
         || title.starts_with('<')
         || title.starts_with("```")
+        || lower.contains("loading model")
+        || lower.contains("short, descriptive title")
+        || lower.contains("return only the title")
+        || lower.contains("user's prompt")
+        || lower.starts_with("here is")
+        || lower.starts_with("here's")
     {
         return None;
     }
@@ -500,6 +560,15 @@ mod tests {
         );
         assert_eq!(parse_title(""), None);
         assert_eq!(parse_title("<|im_end|>"), None);
+        assert_eq!(
+            parse_title("Loading model...\n<title>Standing fox in a forest</title>\nExiting..."),
+            Some("Standing fox in a forest".into())
+        );
+        assert_eq!(
+            parse_title("Loading model...\n> A fox in a forest\n[ Prompt: 10 t/s ]\nExiting..."),
+            Some("A fox in a forest".into())
+        );
+        assert_eq!(parse_title("Loading model...\nExiting..."), None);
     }
 
     #[cfg(unix)]

@@ -338,8 +338,9 @@ fn build_row_box(ui: &Rc<Ui>, entry: &Generation, depth: usize, group: RowGroup)
     let prompt_label = gtk::Label::builder()
         .label(entry.display_name())
         .xalign(0.0)
-        .ellipsize(gtk::pango::EllipsizeMode::End)
-        .max_width_chars(18)
+        // Keep both the base title and the derived suffix visible.
+        .ellipsize(gtk::pango::EllipsizeMode::Middle)
+        .max_width_chars(24)
         .lines(1)
         .build();
     let meta_label = gtk::Label::builder()

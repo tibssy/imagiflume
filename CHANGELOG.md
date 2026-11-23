@@ -11,16 +11,17 @@ rough edges.
   line shows the selected `sd-server` and `llama.cpp` backends, switches the
   `sd-server` label to `auto` after such a fallback, and shows llama.cpp as
   `CPU (Vulkan build)` when its helper falls back because no device is present.
-- **Image transforms**: rotate an image 90° left or right, or flip it
-  horizontally or vertically, from the canvas transform menu. It works on
-  generated images and on references. Recorded images join the history chain;
-  cache-only references are replaced in the reference set.
-- **History titles**: after a generation, `llama-cli` writes a short title when
-  the active model has a usable language encoder. History rows show the title
-  and fall back to the prompt when the helper is unavailable; imported images
-  keep their file name. The history schema moves to version 2 with a `title`
-  column, so existing databases are backed up as `history.v1.bak` before the
-  migration.
+- **Image transforms**: the canvas transform menu previews 90° left/right
+  rotations and horizontal/vertical flips, and only the checkmark saves the
+  result. It works on generated images and on references. Recorded images join
+  the history chain; cache-only references are replaced in the reference set.
+- **History titles**: generated images get a short base title from `llama-cli`
+  (or a prompt-derived fallback). Derived images append a suffix such as
+  `- Upscaled 2x`, `- Rotated +90`, `- Brightness +28` or the effect name, and
+  the PNG file name uses the same title. History rows show the title instead of
+  the full prompt; imported images keep their file name. The history schema
+  moves to version 2 with a `title` column, so existing databases are backed up
+  as `history.v1.bak` before the migration.
 - **Camera permissions**: capture goes through the XDG camera portal. The
   first use asks for permission, GNOME lists Imagiflume under
   **Settings → Privacy & Security → Camera**, and a denial points at that

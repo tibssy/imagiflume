@@ -35,6 +35,8 @@ pub(crate) struct MainView {
     pub variation_button: gtk::Button,
     pub adjust_button: gtk::Button,
     pub transform_button: gtk::MenuButton,
+    pub transform_popover: gtk::Popover,
+    pub transform_apply_button: gtk::Button,
     pub rotate_left_button: gtk::Button,
     pub rotate_right_button: gtk::Button,
     pub flip_horizontal_button: gtk::Button,
@@ -175,6 +177,12 @@ pub(crate) fn build() -> MainView {
         .tooltip_text("Flip vertically")
         .css_classes(["flat", "circular"])
         .build();
+    let transform_apply_button = gtk::Button::builder()
+        .icon_name("object-select-symbolic")
+        .tooltip_text("Apply the transform")
+        .sensitive(false)
+        .css_classes(["suggested-action", "circular"])
+        .build();
     let transform_box = gtk::Box::new(gtk::Orientation::Horizontal, 4);
     transform_box.set_margin_top(8);
     transform_box.set_margin_bottom(8);
@@ -184,17 +192,10 @@ pub(crate) fn build() -> MainView {
     transform_box.append(&rotate_right_button);
     transform_box.append(&flip_horizontal_button);
     transform_box.append(&flip_vertical_button);
+    transform_box.append(&gtk::Separator::new(gtk::Orientation::Vertical));
+    transform_box.append(&transform_apply_button);
     let transform_popover = gtk::Popover::new();
     transform_popover.set_child(Some(&transform_box));
-    for button in [
-        &rotate_left_button,
-        &rotate_right_button,
-        &flip_horizontal_button,
-        &flip_vertical_button,
-    ] {
-        let popover = transform_popover.clone();
-        button.connect_clicked(move |_| popover.popdown());
-    }
     let transform_button = gtk::MenuButton::builder()
         .icon_name("object-rotate-right-symbolic")
         .tooltip_text("Rotate or flip the image")
@@ -679,6 +680,8 @@ pub(crate) fn build() -> MainView {
         zoom_overlay,
         adjust_button,
         transform_button,
+        transform_popover,
+        transform_apply_button,
         rotate_left_button,
         rotate_right_button,
         flip_horizontal_button,
