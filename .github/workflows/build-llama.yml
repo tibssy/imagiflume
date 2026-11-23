@@ -11,6 +11,10 @@ on:
         description: "Release tag to upload to (leave empty to keep artifacts only)"
         required: false
         default: ""
+      job:
+        description: "Job to run: all, llama, cuda or rocm"
+        required: false
+        default: "all"
   push:
     tags:
       - "backends-llama-*"
@@ -25,6 +29,7 @@ env:
 jobs:
   llama:
     name: llama.cpp ${{ matrix.name }}
+    if: ${{ inputs.job == '' || inputs.job == 'all' || inputs.job == 'llama' }}
     strategy:
       fail-fast: false
       matrix:
@@ -135,6 +140,7 @@ jobs:
 
   cuda:
     name: llama.cpp ${{ matrix.name }}
+    if: ${{ inputs.job == '' || inputs.job == 'all' || inputs.job == 'cuda' }}
     strategy:
       fail-fast: false
       matrix:
@@ -247,6 +253,7 @@ jobs:
 
   rocm:
     name: llama.cpp rocm10
+    if: ${{ inputs.job == '' || inputs.job == 'all' || inputs.job == 'rocm' }}
     runs-on: ubuntu-22.04
     container:
       image: rocm/dev-ubuntu-22.04:10.0.0-full
@@ -254,6 +261,11 @@ jobs:
     env:
       HIP_PATH: /opt/rocm
     steps:
+      - name: Install git
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git
+
       - name: Checkout Imagiflume
         uses: actions/checkout@v4
 
