@@ -11,9 +11,9 @@
 # IMAGIFLUME_CUDA_ARCH=86 (Ampere), 89 (Ada), 120 (Blackwell), etc.
 
 pkgname=imagiflume
-pkgver=0.2.0beta1
+pkgver=0.2.0beta2
 pkgrel=1
-_tag="0.2.0-beta.1"
+_tag="0.2.0-beta.2"
 pkgdesc='GTK4/libadwaita desktop app for local image generation with stable-diffusion.cpp'
 arch=('x86_64')
 url='https://github.com/tibssy/imagiflume'
@@ -25,7 +25,7 @@ optdepends=('nvidia-utils: CUDA inference on NVIDIA GPUs'
             'llama.cpp: prompt improvement using the active text encoder')
 source=("$pkgname-$_tag.tar.gz::https://github.com/tibssy/imagiflume/archive/refs/tags/v$_tag.tar.gz"
         "stable-diffusion.cpp::git+https://github.com/leejet/stable-diffusion.cpp#commit=32d516c0197ed5ca31305b8575e14eb1451fad33")
-sha256sums=('4ef7a8718b6bac8d509043288ab8f02e2df9610eba87e36c00f40259f74878ea' 'SKIP')
+sha256sums=('SKIP' 'SKIP')
 
 _cuda_arch="${IMAGIFLUME_CUDA_ARCH:-52}"
 

@@ -3,7 +3,7 @@
 All notable changes to Imagiflume. Alpha builds are test releases; expect
 rough edges.
 
-## Unreleased
+## 0.2.0-beta.2 — 2026-11-23
 
 - **Backend compatibility**: accept the `configured` state reported by
   stable-diffusion.cpp `3b12781` and newer. Those builds configure the model

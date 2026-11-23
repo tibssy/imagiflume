@@ -69,6 +69,13 @@
   </keywords>
 
   <releases>
+    <release version="0.2.0-beta.2" date="2026-11-23">
+      <description>
+        <p>Accept the lazily configured state reported by stable-diffusion.cpp
+          3b12781, which made new backend builds wait out the startup
+          timeout.</p>
+      </description>
+    </release>
     <release version="0.2.0-beta.1" date="2026-11-22">
       <description>
         <p>First beta: generation, editing, upscaling, LoRAs and history.</p>
