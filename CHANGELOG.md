@@ -3,6 +3,18 @@
 All notable changes to Imagiflume. Alpha builds are test releases; expect
 rough edges.
 
+## Unreleased
+
+- **Prompt improvement context and streaming**: when editing, Improve asks the
+  local LFM2.5-VL helper to describe the reference image, uses that description
+  as authoritative scene context, and streams the rewritten prompt into the
+  composer. Typing while it streams cancels the run and keeps the user's text.
+  Imported images without the helper fall back to the saved prompt history.
+- **AppImage builds**: the release workflow now produces
+  `imagiflume-linux-x86_64.AppImage` with GTK 4 and libadwaita bundled. It
+  still requires host glibc 2.41+ (Debian 13 build), GPU drivers and
+  GStreamer plugins for camera capture.
+
 ## 0.2.0-beta.3 — 2026-11-23
 
 - **Upscaling on new backends**: stable-diffusion.cpp `3b12781` removed

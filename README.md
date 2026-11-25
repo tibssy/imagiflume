@@ -77,7 +77,9 @@ Milestone 3 (packaged desktop app):
   **Preferences → General** (off by default)
 - **model caching**: `sd-server` keeps the loaded model for 60 s of idle time
   and releases it immediately when you switch models
-- **prompt improvement** through llama.cpp using the active text encoder,
+- **prompt improvement** through llama.cpp using the active text encoder;
+  when editing, the reference image is described locally and the rewritten
+  prompt streams into the composer
   with undo
 - **optional vision helper** (LFM2.5-VL-450M, ~332 MB) for automatic
   day/night detection inside the effects menu; without it, explicit daylight
@@ -324,7 +326,7 @@ without leaving the app.
 | Recall a previous prompt | history button in the composer, or `Alt+Up` / `Alt+Down` |
 | Take a photo | camera button in the composer: first press previews, second captures (asks for permission on first use) |
 | Choose LoRAs | **LoRAs…** in the sidebar |
-| Improve the prompt | ✨ button in the prompt field (needs `llama-cli`) |
+| Improve the prompt | ✨ button in the prompt field (needs `llama-cli`; uses the reference image when editing and streams the result) |
 | New random seed | shuffle button next to the seed field |
 | Preferences / downloads | gear button in the header bar |
 
@@ -547,8 +549,8 @@ the separate `cudart-*` archives are not bundled.
 
 ## Packaging
 
-`packaging/` contains the PKGBUILD, desktop entry, icon, AppStream metadata and
-Flatpak manifests.
+`packaging/` contains the PKGBUILD, desktop entry, icon, AppStream metadata,
+Flatpak manifests and the AppImage build script.
 
 ### Flatpak
 
@@ -605,6 +607,21 @@ The installed binary discovers a backend in this order: `IMAGIFLUME_SD_SERVER`,
 `sd_server` in the config, a sibling of `sd_cli`, a server next to the app
 binary, `/usr/lib/imagiflume`, `/usr/local`, `~/.local`, then `PATH`. If none
 is found it downloads the CPU backend automatically.
+
+### AppImage
+
+`packaging/appimage/build-appimage.sh` builds a portable AppImage with GTK 4
+and libadwaita bundled:
+
+```bash
+./packaging/appimage/build-appimage.sh \
+  --binary target/release/imagiflume --outdir dist
+```
+
+The script downloads pinned `linuxdeploy` and GTK-plugin tools into a cache
+directory. The AppImage still uses the host glibc (2.41+ for the Debian 13 build),
+GPU drivers, fonts and GStreamer plugins for camera capture. Use the Flatpak on older distros or
+when camera capture is required.
 
 ## Layout
 
@@ -683,8 +700,9 @@ binary will always depend on the host GTK stack.
   Hugging Face models are planned after beta.
 - **LoRAs are session-only.** They are cleared when the model changes and are
   never restored on launch.
-- **AppImage is not published yet.** Use the Flatpak (or the Arch PKGBUILD for
-  native installs).
+- **AppImage needs glibc 2.41+.** It bundles GTK 4 and libadwaita from
+  Debian 13, but not glibc, GPU drivers or GStreamer plugins. Use the Flatpak
+  on older distros or when camera capture is required.
 - **3D object generation is not part of beta.**
 - If a run fails or a backend misbehaves, **Preferences → About → Diagnostics**
   shows the detected hardware, the backend log path, and a **Copy diagnostics**

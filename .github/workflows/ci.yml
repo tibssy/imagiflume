@@ -75,6 +75,9 @@ jobs:
       - name: Desktop entry
         run: desktop-file-validate packaging/io.github.tibssy.Imagiflume.desktop
 
+      - name: AppImage build script
+        run: bash -n packaging/appimage/build-appimage.sh
+
       - name: Flatpak manifests
         run: |
           python3 - <<'PY'
