@@ -78,8 +78,8 @@ Milestone 3 (packaged desktop app):
 - **model caching**: `sd-server` keeps the loaded model for 60 s of idle time
   and releases it immediately when you switch models
 - **prompt improvement** through llama.cpp using the active text encoder;
-  when editing, the reference image is described locally and the rewritten
-  prompt streams into the composer
+  when editing, the reference image is described locally and a short edit
+  instruction streams into the composer
   with undo
 - **optional vision helper** (LFM2.5-VL-450M, ~332 MB) for automatic
   day/night detection inside the effects menu; without it, explicit daylight
@@ -326,7 +326,7 @@ without leaving the app.
 | Recall a previous prompt | history button in the composer, or `Alt+Up` / `Alt+Down` |
 | Take a photo | camera button in the composer: first press previews, second captures (asks for permission on first use) |
 | Choose LoRAs | **LoRAs…** in the sidebar |
-| Improve the prompt | ✨ button in the prompt field (needs `llama-cli`; uses the reference image when editing and streams the result) |
+| Improve the prompt | ✨ button in the prompt field (needs `llama-cli`; uses the reference image when editing and streams a short instruction) |
 | New random seed | shuffle button next to the seed field |
 | Preferences / downloads | gear button in the header bar |
 

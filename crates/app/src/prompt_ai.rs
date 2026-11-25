@@ -23,14 +23,7 @@ composition, materials and atmosphere, but do not add new subjects or change \
 the scene. Keep it under 60 words. Return only the improved prompt wrapped in \
 <prompt> and </prompt> tags.";
 
-const EDIT_SYSTEM_PROMPT: &str = "\
-Rewrite the user's edit instruction into a complete description of the desired \
-final image. If a current image description is provided, treat it as \
-authoritative and preserve its subject, composition, style and lighting. \
-Otherwise, use the original scene and previous edits as context, treating those \
-edits as already applied. Apply only the requested change. Do not add new \
-subjects. Keep it under 80 words. Return only the prompt wrapped in <prompt> \
-and </prompt> tags.";
+const EDIT_SYSTEM_PROMPT: &str = r#"Rewrite the user's edit request into one short instruction (max 20 words). Use the current image description, or the original scene and previous edits when there is no current description, to identify the subject and what stays the same. Name the concrete change. If the request is a vague style word, name a concrete visual style. Do not describe the whole scene or add motion. Examples: "make it eat" -> "Make the main subject hold food in its mouth, keeping its pose and background." "make it night" -> "Turn the scene into night with moonlight and deep shadows, keeping the composition unchanged." "make it animated" -> "Turn the main subject into a 2D animated cartoon with bold outlines and flat colors, keeping its pose and background." Return only the instruction wrapped in <prompt> and </prompt> tags."#;
 
 const DESCRIBE_PROMPT: &str = "\
 Describe this image in one concise paragraph for an image-editing assistant. \
@@ -46,6 +39,7 @@ models, prompts or instructions. Return only the title wrapped in <title> and \
 
 const TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_TOKENS: u32 = 220;
+const EDIT_MAX_TOKENS: u32 = 90;
 const DESCRIBE_TIMEOUT: Duration = Duration::from_secs(60);
 const DESCRIBE_MAX_TOKENS: u32 = 180;
 const TITLE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -516,15 +510,21 @@ pub(crate) fn list_devices(cli: &Path) -> Option<String> {
 }
 
 fn build_command(cli: &Path, encoder: &Path, prompt: &str) -> Command {
-    build_prompt_command(cli, encoder, SYSTEM_PROMPT, prompt)
+    build_prompt_command(cli, encoder, SYSTEM_PROMPT, prompt, MAX_TOKENS)
 }
 
 fn build_edit_command(cli: &Path, encoder: &Path, context: &str, instruction: &str) -> Command {
     let prompt = format!("{context}\nNew edit: {instruction}");
-    build_prompt_command(cli, encoder, EDIT_SYSTEM_PROMPT, &prompt)
+    build_prompt_command(cli, encoder, EDIT_SYSTEM_PROMPT, &prompt, EDIT_MAX_TOKENS)
 }
 
-fn build_prompt_command(cli: &Path, encoder: &Path, system: &str, prompt: &str) -> Command {
+fn build_prompt_command(
+    cli: &Path,
+    encoder: &Path,
+    system: &str,
+    prompt: &str,
+    max_tokens: u32,
+) -> Command {
     let mut command = Command::new(cli);
     command
         .arg("-m")
@@ -544,7 +544,7 @@ fn build_prompt_command(cli: &Path, encoder: &Path, system: &str, prompt: &str) 
         .arg("4096")
         .arg("--no-warmup")
         .arg("-n")
-        .arg(MAX_TOKENS.to_string())
+        .arg(max_tokens.to_string())
         .arg("--temp")
         .arg("0.4")
         .arg("-t")
@@ -939,7 +939,9 @@ mod tests {
             .find(|pair| pair[0] == "-sys")
             .map(|pair| pair[1].as_str())
             .unwrap();
-        assert!(system.contains("desired final image"));
+        assert!(system.contains("short instruction"));
+        assert!(system.contains("2D animated cartoon"));
+        assert!(args.windows(2).any(|pair| pair == ["-n", "90"]));
         let prompt = args
             .windows(2)
             .find(|pair| pair[0] == "-p")
