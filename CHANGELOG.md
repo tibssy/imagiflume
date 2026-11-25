@@ -8,7 +8,8 @@ rough edges.
 - **Prompt improvement context and streaming**: when editing, Improve asks the
   local LFM2.5-VL helper to describe the reference image, uses that description
   as authoritative scene context, and streams a short edit instruction (max
-  20 words) into the composer. Typing while it streams cancels the run and keeps the user's text.
+  20 words) that names the actual subject (fox, turtle, building) instead of
+  "main subject". Typing while it streams cancels the run and keeps the user's text.
   Imported images without the helper fall back to the saved prompt history.
 - **AppImage builds**: the release workflow now produces
   `imagiflume-linux-x86_64.AppImage` with GTK 4 and libadwaita bundled. It

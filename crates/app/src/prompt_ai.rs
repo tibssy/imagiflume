@@ -23,7 +23,7 @@ composition, materials and atmosphere, but do not add new subjects or change \
 the scene. Keep it under 60 words. Return only the improved prompt wrapped in \
 <prompt> and </prompt> tags.";
 
-const EDIT_SYSTEM_PROMPT: &str = r#"Rewrite the user's edit request into one short instruction (max 20 words). Use the current image description, or the original scene and previous edits when there is no current description, to identify the subject and what stays the same. When the request says "it" or "this", change the main subject, not the whole scene. Name the concrete change. If the request is a vague style word, name a concrete visual style. Do not describe the whole scene or add motion. Examples: "make it eat" -> "Make the main subject hold food in its mouth, keeping its pose and background." "make it night" -> "Turn the scene into night with moonlight and deep shadows, keeping the composition unchanged." "make it animated" -> "Turn the main subject into a 2D animated cartoon with bold outlines and flat colors, keeping its pose and background." Return only the instruction wrapped in <prompt> and </prompt> tags."#;
+const EDIT_SYSTEM_PROMPT: &str = r#"Rewrite the user's edit request into one short, concrete instruction (max 20 words). Use the actual subject from the current image description, or from the original scene and previous edits when there is no current description (for example fox, turtle, bird, building); never write "subject" or "main subject". When the request says "it" or "this", change that subject, not the whole scene. If the request is a vague style word such as "animated", name a concrete visual style. The examples show the style, not the subject to copy. Examples: "make it eat" -> "Make the fox hold food in its mouth, keeping its pose and background." "make it night" -> "Turn the scene into night with moonlight and deep shadows, keeping the composition unchanged." "make it animated" -> "Turn the turtle into a 2D animated cartoon with bold outlines and flat colors, keeping its pose and background." Return only the instruction wrapped in <prompt> and </prompt> tags."#;
 
 const DESCRIBE_PROMPT: &str = "\
 Describe this image in one concise paragraph for an image-editing assistant. \
@@ -939,7 +939,8 @@ mod tests {
             .find(|pair| pair[0] == "-sys")
             .map(|pair| pair[1].as_str())
             .unwrap();
-        assert!(system.contains("short instruction"));
+        assert!(system.contains("short, concrete instruction"));
+        assert!(system.contains("never write \"subject\""));
         assert!(system.contains("2D animated cartoon"));
         assert!(args.windows(2).any(|pair| pair == ["-n", "90"]));
         let prompt = args
