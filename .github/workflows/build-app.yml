@@ -111,27 +111,7 @@ jobs:
           ls -lh dist/imagiflume-linux-x86_64.AppImage*
 
       - name: Smoke-test AppImage
-        run: |
-          set -eux
-          image="$PWD/dist/imagiflume-linux-x86_64.AppImage"
-          mkdir -p appimage-smoke
-          cd appimage-smoke
-          "$image" --appimage-extract >/dev/null
-          ! ldd squashfs-root/usr/bin/imagiflume | grep "not found"
-          test -f squashfs-root/usr/lib/libgtk-4.so.1
-          test -f squashfs-root/usr/lib/libadwaita-1.so.0
-          grep -R "unset GDK_BACKEND" squashfs-root/apprun-hooks
-          cd ..
-          set +e
-          timeout --kill-after=2 12 dbus-run-session -- xvfb-run -a \
-            env GSK_RENDERER=cairo LIBGL_ALWAYS_SOFTWARE=1 "$image" \
-            > appimage-smoke.log 2>&1
-          rc=$?
-          set -e
-          cat appimage-smoke.log
-          pkill -x AppRun.wrapped 2>/dev/null || true
-          pkill -x imagiflume 2>/dev/null || true
-          test "$rc" -eq 124
+        run: ./packaging/appimage/smoke-test.sh dist/imagiflume-linux-x86_64.AppImage
 
       - name: Publish beta release
         uses: softprops/action-gh-release@v2
