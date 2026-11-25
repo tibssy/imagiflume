@@ -39,8 +39,8 @@ grep -R "unset GDK_BACKEND" squashfs-root/apprun-hooks
 
 set +e
 timeout --kill-after=2 12 dbus-run-session -- xvfb-run -a \
-    env GSK_RENDERER=cairo LIBGL_ALWAYS_SOFTWARE=1 "$IMAGE" \
-    > "$WORK/run.log" 2>&1
+    env APPIMAGE_EXTRACT_AND_RUN=1 GSK_RENDERER=cairo LIBGL_ALWAYS_SOFTWARE=1 \
+    "$IMAGE" > "$WORK/run.log" 2>&1
 rc=$?
 set -e
 cat "$WORK/run.log"
