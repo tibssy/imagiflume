@@ -15,6 +15,9 @@ rough edges.
   `imagiflume-linux-x86_64.AppImage` with GTK 4 and libadwaita bundled. It
   still requires host glibc 2.41+ (Debian 13 build), GPU drivers and
   GStreamer plugins for camera capture.
+- **Edit mode resets Style**: loading a reference switches the Style dropdown
+  to None and saves it, so a look suffix is not silently appended to an edit
+  prompt. Pick a style again to apply one while editing.
 
 ## 0.2.0-beta.3 — 2026-11-23
 

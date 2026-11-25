@@ -336,6 +336,10 @@ leave edit mode and generate from text alone. The composer opens empty; the
 history button in its toolbar loads an earlier prompt, and the camera
 button takes a photo and uses it as a reference.
 
+Entering edit mode resets **Style** to **None**, so a saved look suffix does
+not override the reference or the edit instruction. Pick a style again from the
+dropdown if you want one.
+
 After a generation the prompt field slides away and is cleared. Use the pencil
 button on the image (or `New`) to bring it back; with no references selected,
 the pencil makes the current image the edit reference. The history button in

@@ -937,6 +937,7 @@ pub(crate) fn use_as_reference(ui: &Rc<Ui>, entry: &Generation) {
     crate::pause_live_view(ui);
     cancel_zoom(ui);
     restore_settings(ui, entry);
+    crate::reset_edit_style(ui);
 
     ui.undo.borrow_mut().clear();
     ui.state.borrow_mut().load(PathBuf::from(&entry.image_path));

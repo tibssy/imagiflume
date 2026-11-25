@@ -2497,6 +2497,7 @@ fn edit_current_image(ui: &Rc<Ui>) {
     update_image_view(ui);
     if added {
         fit_reference_size(ui);
+        reset_edit_style(ui);
     }
     show_composer(ui, true);
     let count = ui.state.borrow().references.len();
@@ -2662,10 +2663,14 @@ fn apply_crop(ui: &Rc<Ui>, selection: CropRect) {
     match result {
         Ok((destination, surface)) => {
             let previous = ui.state.borrow().clone();
+            let was_editing = ui.state.borrow().is_editing();
             ui.undo
                 .borrow_mut()
                 .push(&previous, (x as f64, y as f64, width as f64, height as f64));
             ui.state.borrow_mut().load(destination);
+            if !was_editing {
+                reset_edit_style(ui);
+            }
             update_image_view(ui);
             fit_reference_size(ui);
             start_zoom(
@@ -3417,6 +3422,10 @@ pub(crate) fn add_references(ui: &Rc<Ui>, paths: Vec<PathBuf>) {
         return;
     }
 
+    if was_empty {
+        reset_edit_style(ui);
+    }
+
     ui.undo.borrow_mut().clear();
     update_image_view(ui);
     if was_empty && count == 1 {
@@ -4062,6 +4071,28 @@ fn current_style_id(ui: &Rc<Ui>) -> &'static str {
         .get(ui.style_dropdown.selected() as usize)
         .map(|style| style.id)
         .unwrap_or("none")
+}
+
+/// Entering edit mode starts with no style suffix.
+///
+/// The reference already defines the look; silently appending a saved style
+/// (for example Disney/Pixar) would override the edit request. The user can
+/// still pick a style again from the dropdown.
+pub(crate) fn reset_edit_style(ui: &Rc<Ui>) {
+    let selected_none = ui.style_dropdown.selected() == 0;
+    let config_changed = ui.config.borrow().style_id != "none";
+    if !selected_none {
+        ui.style_dropdown.set_selected(0);
+    }
+    if config_changed {
+        let mut config = ui.config.borrow_mut();
+        config.style_id = "none".to_string();
+        let _ = config.save();
+    }
+    if !selected_none || config_changed {
+        ui.toast
+            .add_toast(adw::Toast::new("Style set to None for editing."));
+    }
 }
 
 fn start_generation(ui: &Rc<Ui>) {
