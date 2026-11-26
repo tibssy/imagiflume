@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and generation showcase
+    url: https://github.com/tibssy/imagiflume/discussions
+    about: Ask for help or share images. Please keep issues for bugs and feature requests.
+  - name: Latest beta and downloads
+    url: https://github.com/tibssy/imagiflume/releases
+    about: Flatpak, AppImage, native tarball, and checksums.
+  - name: Known issues and troubleshooting
+    url: https://github.com/tibssy/imagiflume#known-issues
+    about: Check this before filing a bug.

@@ -1,0 +1,127 @@
+name: Bug report
+description: Something crashed, failed, or looked wrong.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing Imagiflume. Search existing issues and check the
+        [known issues](https://github.com/tibssy/imagiflume#known-issues) first.
+        The app's **Report an Issue** button prefills this form and copies the
+        full backend log to your clipboard.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before filing
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: I am on the latest beta release.
+          required: true
+        - label: I read the Known issues section in the README.
+          required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install Imagiflume?
+      options:
+        - Flatpak
+        - AppImage
+        - Native tarball
+        - AUR / built from source
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: |
+        Open **Preferences → About → Diagnostics → Copy diagnostics**, or use
+        **Report an Issue** in the app, and paste the result here. Paths are
+        sanitized, but review the text and remove anything you do not want to
+        share.
+      placeholder: |
+        Imagiflume 0.2.0-beta.4
+        Channel: Flatpak
+        GPU: ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: What were you doing?
+      options:
+        - Generating an image
+        - Editing or using a reference image
+        - Upscaling
+        - Camera preview or capture
+        - Downloading or loading a model
+        - Startup or settings
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: model
+    attributes:
+      label: Model preset
+      description: Choose the preset involved, if any.
+      options:
+        - FLUX.2 klein 4B (default)
+        - FLUX.2 klein 9B
+        - FLUX.3 Image klein
+        - Fibo 2.0 Edit Turbo
+        - Qwen Image 2.1 Turbo
+        - FLUX.1 schnell
+        - Not model-related
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: input
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead? Include the exact error text if there is one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        **Report an Issue** copies the full report and fills this field with the
+        end of the backend log. Paste the copied report here if this is empty or
+        truncated. Remove personal paths if needed.
+    validations:
+      required: false
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: Drag images here if the problem is visual.
+    validations:
+      required: false
