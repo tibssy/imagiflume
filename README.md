@@ -709,8 +709,10 @@ binary will always depend on the host GTK stack.
   on older distros or when camera capture is required.
 - **3D object generation is not part of beta.**
 - If a run fails or a backend misbehaves, **Preferences → About → Diagnostics**
-  shows the detected hardware, the backend log path, and a **Copy diagnostics**
-  button for bug reports.
+  has **Report an Issue**, which copies a sanitized report (no home directory,
+  username, or hostname) and opens a prefilled GitHub bug report. The report
+  includes the end of the backend and prompt-helper logs; **Copy diagnostics**
+  copies the environment summary alone.
 
 ## Roadmap
 

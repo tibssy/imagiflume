@@ -3,6 +3,16 @@
 All notable changes to Imagiflume. Alpha builds are test releases; expect
 rough edges.
 
+## Unreleased
+
+- **Report an Issue**: **Preferences → About → Diagnostics → Report an Issue**
+  copies a report with the end of the backend and prompt-helper logs, then opens
+  a prefilled GitHub bug report. The home directory, username, and hostname are
+  redacted. The full report goes to the clipboard because GitHub URLs cannot
+  carry the complete logs; a short tail is filled into the form.
+- **Issue forms**: bug reports and feature requests now use GitHub issue forms,
+  blank issues are disabled, and questions and showcases move to Discussions.
+
 ## 0.2.0-beta.4 — 2026-11-26
 
 - **Enter submits prompts**: pressing Enter in the composer starts Generate;

@@ -12,7 +12,6 @@ use imagiflume_core::vision::{VISION_HELPER, VisionHelper};
 use crate::{Ui, active_preset, refresh_model_list};
 
 const REPO_URL: &str = "https://github.com/tibssy/imagiflume";
-const ISSUES_URL: &str = "https://github.com/tibssy/imagiflume/issues";
 const LICENSE_URL: &str = "https://github.com/tibssy/imagiflume/blob/main/LICENSE";
 const FLUX2_KLEIN_URL: &str = "https://huggingface.co/black-forest-labs/FLUX.2-klein-4B";
 const FLUX2_KLEIN_9B_URL: &str = "https://huggingface.co/black-forest-labs/FLUX.2-klein-9B";
@@ -720,7 +719,7 @@ fn show_preferences_inner(ui: &Rc<Ui>, focus_models: bool) {
 
     let copy_row = adw::ActionRow::builder()
         .title("Copy diagnostics")
-        .subtitle("Version, backend, hardware, paths and locale")
+        .subtitle("Version, backend, hardware and sanitized paths")
         .build();
     let copy_button = gtk::Button::builder()
         .label("Copy")
@@ -730,12 +729,45 @@ fn show_preferences_inner(ui: &Rc<Ui>, focus_models: bool) {
     {
         let ui = ui.clone();
         copy_button.connect_clicked(move |_| {
-            ui.window.clipboard().set_text(&diagnostics_text(&ui));
+            ui.window
+                .clipboard()
+                .set_text(&crate::diagnostics::summary(&ui));
             ui.toast.add_toast(adw::Toast::new("Diagnostics copied."));
         });
     }
     copy_row.add_suffix(&copy_button);
     diagnostics_group.add(&copy_row);
+
+    let report_row = adw::ActionRow::builder()
+        .title("Report an Issue")
+        .subtitle("Copies the full report and opens a prefilled GitHub form")
+        .build();
+    let report_button = gtk::Button::builder()
+        .label("Report")
+        .valign(gtk::Align::Center)
+        .css_classes(["flat"])
+        .build();
+    {
+        let ui = ui.clone();
+        report_button.connect_clicked(move |_| {
+            let diagnostics = crate::diagnostics::summary(&ui);
+            let report = crate::diagnostics::full_report(&diagnostics);
+            ui.window.clipboard().set_text(&report);
+            let logs = crate::diagnostics::prefill_logs(&diagnostics);
+            let url = crate::diagnostics::issue_url(&diagnostics, logs.as_deref());
+            tracing::debug!(
+                url_len = url.len(),
+                has_logs = logs.is_some(),
+                "opening prefilled issue report"
+            );
+            open_uri(&url);
+            ui.toast.add_toast(adw::Toast::new(
+                "Report copied. Paste it into Logs if the field is empty.",
+            ));
+        });
+    }
+    report_row.add_suffix(&report_button);
+    diagnostics_group.add(&report_row);
     about.add(&diagnostics_group);
 
     let project_group = adw::PreferencesGroup::builder().title("Project").build();
@@ -743,11 +775,6 @@ fn show_preferences_inner(ui: &Rc<Ui>, focus_models: bool) {
         "Website",
         "github.com/tibssy/imagiflume",
         REPO_URL,
-    ));
-    project_group.add(&link_row(
-        "Report an Issue",
-        "github.com/tibssy/imagiflume/issues",
-        ISSUES_URL,
     ));
     about.add(&project_group);
 
@@ -1247,76 +1274,6 @@ fn open_path(path: &Path) {
         return;
     }
     open_uri(&gtk::gio::File::for_path(path).uri());
-}
-
-/// Plain-text environment summary for bug reports.
-fn diagnostics_text(ui: &Ui) -> String {
-    use std::fmt::Write as _;
-
-    let config = ui.config.borrow();
-    let locale = std::env::var("LC_ALL")
-        .or_else(|_| std::env::var("LC_MESSAGES"))
-        .or_else(|_| std::env::var("LANG"))
-        .unwrap_or_else(|_| "unknown".into());
-    let server = config
-        .sd_server
-        .as_ref()
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|| "auto-detected".into());
-    let prompt_helper = crate::prompt_ai::find_cli(&config)
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|| "not found".into());
-
-    let mut text = String::new();
-    let _ = writeln!(
-        text,
-        "{} {}",
-        imagiflume_core::APP_NAME,
-        env!("CARGO_PKG_VERSION")
-    );
-    let _ = writeln!(
-        text,
-        "Channel: {}",
-        if crate::backends::in_flatpak() {
-            "Flatpak"
-        } else {
-            "Native"
-        }
-    );
-    let _ = writeln!(text, "Locale: {locale}");
-    let _ = writeln!(text, "GPU: {}", HardwareProfile::detect().summary());
-    let _ = writeln!(
-        text,
-        "Backend: stable-diffusion.cpp · {}",
-        config.backend.as_deref().unwrap_or("auto")
-    );
-    let _ = writeln!(
-        text,
-        "Backend id: {}",
-        config.backend_id.as_deref().unwrap_or("system")
-    );
-    let _ = writeln!(text, "Server: {server}");
-    let _ = writeln!(text, "Prompt helper: {prompt_helper}");
-    let _ = writeln!(text, "Models: {}", config.models_dir.display());
-    let _ = writeln!(text, "Output: {}", config.output_dir.display());
-    let _ = writeln!(
-        text,
-        "History: {}",
-        imagiflume_core::paths::history_db().display()
-    );
-    let _ = writeln!(
-        text,
-        "Log: {}",
-        imagiflume_core::paths::cache_dir()
-            .join("sd-server.log")
-            .display()
-    );
-    let _ = writeln!(
-        text,
-        "Prompt helper log: {}",
-        crate::prompt_ai::log_path().display()
-    );
-    text
 }
 
 fn confirm_license(
