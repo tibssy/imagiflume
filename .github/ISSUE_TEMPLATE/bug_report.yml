@@ -8,8 +8,9 @@ body:
       value: |
         Thanks for testing Imagiflume. Search existing issues and check the
         [known issues](https://github.com/tibssy/imagiflume#known-issues) first.
-        The app's **Report an Issue** button prefills this form and copies the
-        full backend log to your clipboard.
+        Recent builds have a **Report an Issue** button that prefills this form
+        and copies the full backend log to your clipboard. On older builds, use
+        **Copy diagnostics** and paste the log manually.
 
   - type: checkboxes
     id: preflight
@@ -42,9 +43,9 @@ body:
       label: Diagnostics
       description: |
         Open **Preferences → About → Diagnostics → Copy diagnostics**, or use
-        **Report an Issue** in the app, and paste the result here. Paths are
-        sanitized, but review the text and remove anything you do not want to
-        share.
+        **Report an Issue** in recent builds, and paste the result here. Paths
+        are sanitized, but review the text and remove anything you do not want
+        to share.
       placeholder: |
         Imagiflume 0.2.0-beta.4
         Channel: Flatpak
@@ -112,9 +113,11 @@ body:
     attributes:
       label: Logs
       description: |
-        **Report an Issue** copies the full report and fills this field with the
-        end of the backend log. Paste the copied report here if this is empty or
-        truncated. Remove personal paths if needed.
+        **Report an Issue** in recent builds copies the full report and fills
+        this field with the end of the backend log. On older builds, paste the
+        last ~100 lines of `~/.cache/imagiflume/sd-server.log`. Paste the copied
+        report here if this is empty or truncated. Remove personal paths if
+        needed.
     validations:
       required: false
 
