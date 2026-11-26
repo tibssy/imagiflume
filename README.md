@@ -284,7 +284,7 @@ without leaving the app.
 
 | Action | Shortcut / control |
 |---|---|
-| Generate | `Ctrl+Enter` or **Generate** |
+| Generate | `Enter` or **Generate** (`Shift+Enter` adds a new line) |
 | Cancel | stop button (cancels the running server job) |
 | Preferences | `Ctrl+,` or the header menu |
 | Toggle the sidebar | `Ctrl+B` or the header button |
@@ -324,7 +324,7 @@ without leaving the app.
 | Reorder waiting jobs | up/down arrows on a waiting queue row |
 | Duplicate a queued prompt | copy button on a waiting queue row |
 | Recall a previous prompt | history button in the composer, or `Alt+Up` / `Alt+Down` |
-| Take a photo | camera button in the composer: first press previews, second captures (asks for permission on first use) |
+| Take a photo | camera button in the composer: first press previews, second captures at the highest supported resolution (asks for permission on first use) |
 | Choose LoRAs | **LoRAs…** in the sidebar |
 | Improve the prompt | ✨ button in the prompt field (needs `llama-cli`; uses the reference image when editing and streams a short instruction) |
 | New random seed | shuffle button next to the seed field |

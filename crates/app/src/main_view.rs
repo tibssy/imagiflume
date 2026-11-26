@@ -81,7 +81,7 @@ pub(crate) fn build() -> MainView {
     let empty = adw::StatusPage::builder()
         .icon_name("image-x-generic-symbolic")
         .title("No image yet")
-        .description("Describe an image below, then press Generate.")
+        .description("Describe an image below, then press Enter. Shift+Enter adds a new line.")
         .build();
 
     let picture = gtk::Picture::builder()
@@ -570,7 +570,7 @@ pub(crate) fn build() -> MainView {
 
     let generate = gtk::Button::builder()
         .icon_name("document-send-symbolic")
-        .tooltip_text("Generate (Ctrl+Enter)")
+        .tooltip_text("Generate (Enter)")
         .valign(gtk::Align::Center)
         .css_classes(["suggested-action", "circular"])
         .build();

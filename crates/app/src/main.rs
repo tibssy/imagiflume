@@ -1635,6 +1635,22 @@ fn wire_events(ui: &Rc<Ui>, preferences_button: &gtk::Button) {
                 navigate_prompt_history(&ui, key == gdk::Key::Up);
                 return glib::Propagation::Stop;
             }
+            if matches!(key, gdk::Key::Return | gdk::Key::KP_Enter) {
+                if ui.prompt.has_focus() {
+                    // Shift+Enter keeps the TextBuffer's newline behavior.
+                    if state.contains(gdk::ModifierType::SHIFT_MASK) {
+                        return glib::Propagation::Proceed;
+                    }
+                    if ui.composer.reveals_child() {
+                        start_generation(&ui);
+                    }
+                    return glib::Propagation::Stop;
+                }
+                if state.contains(gdk::ModifierType::CONTROL_MASK) && ui.composer.reveals_child() {
+                    start_generation(&ui);
+                    return glib::Propagation::Stop;
+                }
+            }
             if !state.contains(gdk::ModifierType::CONTROL_MASK) {
                 return glib::Propagation::Proceed;
             }
@@ -2275,7 +2291,7 @@ pub(crate) fn update_image_view(ui: &Rc<Ui>) {
                 set_empty_page(
                     ui,
                     "No image yet",
-                    "Describe an image below, then press Generate.",
+                    "Describe an image below, then press Enter. Shift+Enter adds a new line.",
                 );
                 ui.stack.set_visible_child_name("empty");
             }
@@ -2287,7 +2303,7 @@ pub(crate) fn update_image_view(ui: &Rc<Ui>) {
             set_empty_page(
                 ui,
                 "No image yet",
-                "Describe an image below, then press Generate.",
+                "Describe an image below, then press Enter. Shift+Enter adds a new line.",
             );
             ui.stack.set_visible_child_name("empty");
         }
@@ -4494,8 +4510,7 @@ fn pump_queue(ui: &Rc<Ui>) -> bool {
     ui.generating.set(true);
     ui.upscaling.set(upscaling);
     ui.live_preview.borrow_mut().take();
-    ui.generate
-        .set_tooltip_text(Some("Add to queue (Ctrl+Enter)"));
+    ui.generate.set_tooltip_text(Some("Add to queue (Enter)"));
     ui.cancel.set_sensitive(true);
     ui.progress.set_visible(true);
     ui.progress.set_fraction(0.0);
@@ -5178,7 +5193,7 @@ fn finish_job(ui: &Rc<Ui>) {
     if !pump_queue(ui) {
         ui.generating.set(false);
         ui.live_preview.borrow_mut().take();
-        ui.generate.set_tooltip_text(Some("Generate (Ctrl+Enter)"));
+        ui.generate.set_tooltip_text(Some("Generate (Enter)"));
         sync_live_controls(ui);
         ui.cancel.set_sensitive(false);
         ui.progress.set_visible(false);

@@ -5,6 +5,11 @@ rough edges.
 
 ## Unreleased
 
+- **Enter submits prompts**: pressing Enter in the composer starts Generate;
+  Shift+Enter inserts a newline. Ctrl+Enter still works.
+- **Camera quality**: the preview and photo now request the camera's highest
+  advertised resolution instead of whatever PipeWire negotiated first (often
+  320×240).
 - **Prompt improvement context and streaming**: when editing, Improve asks the
   local LFM2.5-VL helper to describe the reference image, uses that description
   as authoritative scene context, and streams a short edit instruction (max

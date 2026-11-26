@@ -476,6 +476,44 @@ fn camera_device(provider: &gst::DeviceProvider) -> Result<gst::Device, String> 
     }
 }
 
+/// Highest raw-video resolutions the camera advertises, largest first.
+///
+/// Without a capsfilter PipeWire may negotiate the first (often 320×240)
+/// format, which makes the preview and the saved photo look pixelated.
+fn best_frame_sizes(device: &gst::Device) -> Option<Vec<(i32, i32)>> {
+    let caps = device.caps()?;
+    let mut sizes = Vec::new();
+    for index in 0..caps.size() {
+        let Some(structure) = caps.structure(index) else {
+            continue;
+        };
+        if structure.name() != "video/x-raw" {
+            continue;
+        }
+        let Ok(width) = structure.get::<i32>("width") else {
+            continue;
+        };
+        let Ok(height) = structure.get::<i32>("height") else {
+            continue;
+        };
+        if width <= 0 || height <= 0 {
+            continue;
+        }
+        // DMABuf-only formats cannot be fed to videoconvert here.
+        if structure
+            .get::<String>("format")
+            .is_ok_and(|format| format == "DMA_DRM")
+        {
+            continue;
+        }
+        if !sizes.contains(&(width, height)) {
+            sizes.push((width, height));
+        }
+    }
+    sizes.sort_by_key(|(width, height)| std::cmp::Reverse(width * height));
+    (!sizes.is_empty()).then_some(sizes)
+}
+
 fn start_preview_pipeline(
     fd: Arc<OwnedFd>,
     signal: async_channel::Sender<()>,
@@ -492,12 +530,26 @@ fn start_preview_pipeline(
     let source = device
         .create_element(None)
         .map_err(|error| format!("Could not open the camera: {error}"))?;
+    let source_filter = best_frame_sizes(&device).map(|sizes| {
+        let caps = sizes
+            .iter()
+            .map(|(width, height)| format!("video/x-raw,width={width},height={height}"))
+            .collect::<Vec<_>>()
+            .join(";")
+            .parse::<gst::Caps>()
+            .map_err(|error| format!("Could not build the camera caps: {error}"))?;
+        tracing::info!(?sizes, "camera frame sizes");
+        let filter = element("capsfilter")?;
+        filter.set_property("caps", &caps);
+        Ok::<_, String>(filter)
+    });
+    let source_filter = source_filter.transpose()?;
     let convert = element("videoconvert")?;
-    let filter = element("capsfilter")?;
+    let rgba_filter = element("capsfilter")?;
     let caps = gst::Caps::builder("video/x-raw")
         .field("format", "RGBA")
         .build();
-    filter.set_property("caps", &caps);
+    rgba_filter.set_property("caps", &caps);
     let sink = element("appsink")?;
     sink.set_property("max-buffers", 1u32);
     sink.set_property("drop", true);
@@ -508,11 +560,19 @@ fn start_preview_pipeline(
         .downcast::<AppSink>()
         .map_err(|_| "Could not create the camera sink.".to_string())?;
 
+    let mut chain: Vec<&gst::Element> = vec![&source];
+    if let Some(filter) = &source_filter {
+        chain.push(filter);
+    }
+    chain.push(&convert);
+    chain.push(&rgba_filter);
+    chain.push(&sink);
+
     let pipeline = gst::Pipeline::new();
     pipeline
-        .add_many([&source, &convert, &filter, &sink])
+        .add_many(chain.iter().copied())
         .map_err(|error| format!("Could not build the camera preview: {error}"))?;
-    gst::Element::link_many([&source, &convert, &filter, &sink])
+    gst::Element::link_many(chain.iter().copied())
         .map_err(|error| format!("Could not link the camera preview: {error}"))?;
     start_pipeline(&pipeline)?;
 
@@ -524,6 +584,11 @@ fn start_preview_pipeline(
         let _ = pipeline.set_state(gst::State::Null);
         return Err("The camera frame is invalid.".to_string());
     };
+    tracing::info!(
+        width = frame.width,
+        height = frame.height,
+        "camera preview frame"
+    );
 
     let latest = Arc::new(Mutex::new(Some(frame)));
     let stop = Arc::new(AtomicBool::new(false));
