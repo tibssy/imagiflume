@@ -3,7 +3,7 @@
 All notable changes to Imagiflume. Alpha builds are test releases; expect
 rough edges.
 
-## Unreleased
+## 0.2.0-beta.4 — 2026-11-26
 
 - **Enter submits prompts**: pressing Enter in the composer starts Generate;
   Shift+Enter inserts a newline. Ctrl+Enter still works.
