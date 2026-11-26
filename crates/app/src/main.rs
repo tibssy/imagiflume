@@ -2,6 +2,7 @@ mod adjust;
 mod backends;
 mod camera;
 mod compare_view;
+mod diagnostics;
 mod effects;
 mod history;
 mod history_view;
