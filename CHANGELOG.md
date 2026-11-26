@@ -3,6 +3,27 @@
 All notable changes to Imagiflume. Alpha builds are test releases; expect
 rough edges.
 
+## Unreleased
+
+- **Enter submits prompts**: pressing Enter in the composer starts Generate;
+  Shift+Enter inserts a newline. Ctrl+Enter still works.
+- **Camera quality**: the preview and photo now request the camera's highest
+  advertised resolution instead of whatever PipeWire negotiated first (often
+  320×240).
+- **Prompt improvement context and streaming**: when editing, Improve asks the
+  local LFM2.5-VL helper to describe the reference image, uses that description
+  as authoritative scene context, and streams a short edit instruction (max
+  20 words) that names the actual subject (fox, turtle, building) instead of
+  "main subject". Typing while it streams cancels the run and keeps the user's text.
+  Imported images without the helper fall back to the saved prompt history.
+- **AppImage builds**: the release workflow now produces
+  `imagiflume-linux-x86_64.AppImage` with GTK 4 and libadwaita bundled. It
+  still requires host glibc 2.41+ (Debian 13 build), GPU drivers and
+  GStreamer plugins for camera capture.
+- **Edit mode resets Style**: loading a reference switches the Style dropdown
+  to None and saves it, so a look suffix is not silently appended to an edit
+  prompt. Pick a style again to apply one while editing.
+
 ## 0.2.0-beta.3 — 2026-11-23
 
 - **Upscaling on new backends**: stable-diffusion.cpp `3b12781` removed

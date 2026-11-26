@@ -9,8 +9,9 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail};
 use imagiflume_core::Config;
@@ -22,6 +23,14 @@ composition, materials and atmosphere, but do not add new subjects or change \
 the scene. Keep it under 60 words. Return only the improved prompt wrapped in \
 <prompt> and </prompt> tags.";
 
+const EDIT_SYSTEM_PROMPT: &str = r#"Rewrite the user's edit request into one short, concrete instruction (max 20 words). Use the actual subject from the current image description, or from the original scene and previous edits when there is no current description (for example fox, turtle, bird, building); never write "subject" or "main subject". When the request says "it" or "this", change that subject, not the whole scene. If the request is a vague style word such as "animated", name a concrete visual style. The examples show the style, not the subject to copy. Examples: "make it eat" -> "Make the fox hold food in its mouth, keeping its pose and background." "make it night" -> "Turn the scene into night with moonlight and deep shadows, keeping the composition unchanged." "make it animated" -> "Turn the turtle into a 2D animated cartoon with bold outlines and flat colors, keeping its pose and background." Return only the instruction wrapped in <prompt> and </prompt> tags."#;
+
+const DESCRIBE_PROMPT: &str = "\
+Describe this image in one concise paragraph for an image-editing assistant. \
+Include the main subject, its pose and position, the setting, lighting, colors \
+and art style. Do not speculate or add details that are not visible. Return \
+only the description wrapped in <description> and </description> tags.";
+
 const TITLE_PROMPT: &str = "\
 Write a short, descriptive title for an image from the user's generation prompt. \
 Use 2 to 6 words, no quotes and no trailing punctuation. Do not mention loading, \
@@ -30,11 +39,16 @@ models, prompts or instructions. Return only the title wrapped in <title> and \
 
 const TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_TOKENS: u32 = 220;
+const EDIT_MAX_TOKENS: u32 = 90;
+const DESCRIBE_TIMEOUT: Duration = Duration::from_secs(60);
+const DESCRIBE_MAX_TOKENS: u32 = 180;
 const TITLE_TIMEOUT: Duration = Duration::from_secs(60);
 const TITLE_MAX_TOKENS: u32 = 32;
+const DESCRIPTION_CACHE_LIMIT: usize = 64;
 /// Titles are cheap to reuse, and serialising the runs avoids four llama-cli
 /// processes for a four-image batch.
 static TITLE_CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+static DESCRIPTION_CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
 const VISION_PROMPT: &str =
     "Is this a night scene or a daylight scene? Answer with one word: night or daylight.";
 const VISION_TIMEOUT: Duration = Duration::from_secs(60);
@@ -86,14 +100,33 @@ fn is_executable(path: &Path) -> bool {
     }
 }
 
-/// Rewrite `prompt` with `encoder` using `cli`.
-pub(crate) fn improve(prompt: &str, encoder: &Path, cli: &Path) -> Result<String> {
+/// Rewrite `prompt` and stream the tagged answer to `on_chunk`.
+///
+/// `context` is an optional block describing the current image and the edit
+/// history. When present, the edit system prompt is used and the model is
+/// asked for a complete target-scene description instead of a generic rewrite.
+/// Returns `None` when `cancel` was set before completion.
+pub(crate) fn improve_streaming<F>(
+    prompt: &str,
+    context: Option<&str>,
+    encoder: &Path,
+    cli: &Path,
+    cancel: Arc<AtomicBool>,
+    on_chunk: F,
+) -> Result<Option<String>>
+where
+    F: FnMut(&str) + Send + 'static,
+{
     if !encoder.exists() {
         bail!("text encoder not found at {}", encoder.display());
     }
-
-    let stdout = run_command(build_command(cli, encoder, prompt), TIMEOUT)?;
-    extract(&stdout).ok_or_else(|| anyhow!("the model did not return a prompt"))
+    let command = match context {
+        Some(context) if !context.trim().is_empty() => {
+            build_edit_command(cli, encoder, context.trim(), prompt)
+        }
+        _ => build_command(cli, encoder, prompt),
+    };
+    run_streaming(command, TIMEOUT, cancel, on_chunk)
 }
 
 /// Ask `encoder` for a short display title for the prompt.
@@ -151,6 +184,70 @@ pub(crate) fn classify_lighting(
         .ok_or_else(|| anyhow!("the vision model did not return night or daylight"))
 }
 
+/// Describe `image` with the small LFM vision helper.
+///
+/// The description is cached by image, mtime and model so repeated Improve
+/// clicks on the same reference are instant.
+pub(crate) fn describe_image(
+    image: &Path,
+    model: &Path,
+    mmproj: &Path,
+    cli: &Path,
+) -> Result<String> {
+    if !model.exists() {
+        bail!("vision model not found at {}", model.display());
+    }
+    if !mmproj.exists() {
+        bail!("vision projector not found at {}", mmproj.display());
+    }
+    if !image.exists() {
+        bail!("image not found at {}", image.display());
+    }
+
+    let key = description_key(image, model, mmproj);
+    let cache = DESCRIPTION_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    {
+        let cache = cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(description) = cache.get(&key) {
+            return Ok(description.clone());
+        }
+    }
+
+    let stdout = run_command(
+        build_describe_command(cli, model, mmproj, image),
+        DESCRIBE_TIMEOUT,
+    )?;
+    let description = parse_description(&stdout)
+        .ok_or_else(|| anyhow!("the vision model did not return a description"))?;
+
+    let mut cache = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if cache.len() >= DESCRIPTION_CACHE_LIMIT {
+        cache.clear();
+    }
+    cache.insert(key, description.clone());
+    Ok(description)
+}
+
+fn description_key(image: &Path, model: &Path, mmproj: &Path) -> String {
+    let modified = std::fs::metadata(image)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    format!(
+        "{}\n{}\n{}\n{}",
+        image.display(),
+        modified,
+        model.display(),
+        mmproj.display()
+    )
+}
+
 fn run_command(mut command: Command, timeout: Duration) -> Result<String> {
     if let Some(parent) = log_path().parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -191,6 +288,213 @@ fn run_command(mut command: Command, timeout: Duration) -> Result<String> {
     Ok(stdout)
 }
 
+/// Run a command and stream `<prompt>…</prompt>` text to `on_chunk`.
+///
+/// Returns `None` if `cancel` was set. When the model ignores the tags, the
+/// complete output is passed through `extract()` at the end.
+fn run_streaming<F>(
+    mut command: Command,
+    timeout: Duration,
+    cancel: Arc<AtomicBool>,
+    mut on_chunk: F,
+) -> Result<Option<String>>
+where
+    F: FnMut(&str) + Send + 'static,
+{
+    if let Some(parent) = log_path().parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let program = command.get_program().to_string_lossy().into_owned();
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("failed to start {program}"))?;
+
+    let stdout = child.stdout.take().expect("piped stdout");
+    let stderr = child.stderr.take().expect("piped stderr");
+    let reader_cancel = cancel.clone();
+    let reader = std::thread::spawn(move || {
+        let mut extractor = PromptExtractor::default();
+        let mut reader = stdout;
+        let mut buffer = [0u8; 2048];
+        loop {
+            if reader_cancel.load(Ordering::SeqCst) {
+                break;
+            }
+            match reader.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(read) => extractor.feed_bytes(&buffer[..read], &mut on_chunk),
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => break,
+            }
+        }
+        extractor.finish(&mut on_chunk);
+        (extractor.raw, extractor.streamed)
+    });
+    let stderr_reader = std::thread::spawn(move || read_all(stderr));
+
+    let started = Instant::now();
+    let status = loop {
+        if cancel.load(Ordering::SeqCst) {
+            let _ = child.kill();
+            let _ = child.wait();
+            break None;
+        }
+        if let Some(status) = child.try_wait()? {
+            break Some(status);
+        }
+        if started.elapsed() > timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = reader.join();
+            let _ = stderr_reader.join();
+            bail!("llama-cli timed out after {}s", timeout.as_secs());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+
+    let (raw, streamed) = reader.join().unwrap_or_default();
+    let stderr = stderr_reader.join().unwrap_or_default();
+
+    if status.is_none() || cancel.load(Ordering::SeqCst) {
+        return Ok(None);
+    }
+    let status = status.expect("status checked");
+    if !status.success() {
+        bail!("llama-cli exited with {status}{}", stderr_tail(&stderr));
+    }
+    if !streamed.trim().is_empty() {
+        Ok(Some(clean(&streamed)))
+    } else {
+        Ok(extract(&raw))
+    }
+}
+
+#[derive(Default)]
+struct PromptExtractor {
+    raw: String,
+    streamed: String,
+    start: Option<usize>,
+    emitted: usize,
+    done: bool,
+    ansi: AnsiStripper,
+    pending: Vec<u8>,
+}
+
+impl PromptExtractor {
+    fn feed_bytes(&mut self, bytes: &[u8], on_chunk: &mut dyn FnMut(&str)) {
+        self.pending.extend_from_slice(bytes);
+        loop {
+            match std::str::from_utf8(&self.pending) {
+                Ok(text) => {
+                    let text = text.to_string();
+                    self.pending.clear();
+                    self.feed_text(&text, on_chunk);
+                    break;
+                }
+                Err(error) => {
+                    let valid = error.valid_up_to();
+                    if valid > 0 {
+                        let text = std::str::from_utf8(&self.pending[..valid])
+                            .expect("valid UTF-8 prefix")
+                            .to_string();
+                        self.feed_text(&text, on_chunk);
+                        self.pending.drain(..valid);
+                    }
+                    if error.error_len().is_some() {
+                        if !self.pending.is_empty() {
+                            self.pending.drain(..1);
+                        }
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    fn feed_text(&mut self, text: &str, on_chunk: &mut dyn FnMut(&str)) {
+        let text = self.ansi.push(text);
+        if text.is_empty() {
+            return;
+        }
+        self.raw.push_str(&text);
+        if self.done {
+            return;
+        }
+        if self.start.is_none() {
+            if let Some(index) = self.raw.find("<prompt>") {
+                let start = index + "<prompt>".len();
+                self.start = Some(start);
+                self.emitted = start;
+            } else {
+                return;
+            }
+        }
+        let start = self.start.expect("start set");
+        if let Some(end) = self.raw[start..].find("</prompt>") {
+            self.emit_until(start + end, on_chunk);
+            self.done = true;
+        } else {
+            let mut safe = self.raw.len().saturating_sub("</prompt>".len() - 1);
+            while safe > self.emitted && !self.raw.is_char_boundary(safe) {
+                safe -= 1;
+            }
+            self.emit_until(safe, on_chunk);
+        }
+    }
+
+    fn emit_until(&mut self, end: usize, on_chunk: &mut dyn FnMut(&str)) {
+        if end <= self.emitted {
+            return;
+        }
+        let chunk = self.raw[self.emitted..end].to_string();
+        self.streamed.push_str(&chunk);
+        on_chunk(&chunk);
+        self.emitted = end;
+    }
+
+    fn finish(&mut self, on_chunk: &mut dyn FnMut(&str)) {
+        if !self.pending.is_empty() {
+            let text = String::from_utf8_lossy(&self.pending).into_owned();
+            self.pending.clear();
+            self.feed_text(&text, on_chunk);
+        }
+        if self.start.is_some() && !self.done {
+            let end = self.raw.len();
+            self.emit_until(end, on_chunk);
+            self.done = true;
+        }
+    }
+}
+
+#[derive(Default)]
+struct AnsiStripper {
+    escaping: bool,
+}
+
+impl AnsiStripper {
+    fn push(&mut self, text: &str) -> String {
+        let mut output = String::with_capacity(text.len());
+        for character in text.chars() {
+            if self.escaping {
+                if character.is_ascii_alphabetic() {
+                    self.escaping = false;
+                }
+                continue;
+            }
+            if character == '\u{1b}' {
+                self.escaping = true;
+            } else {
+                output.push(character);
+            }
+        }
+        output
+    }
+}
+
 /// Persistent llama.cpp log, next to the sd-server log.
 pub(crate) fn log_path() -> PathBuf {
     imagiflume_core::paths::cache_dir().join("llama-cli.log")
@@ -206,12 +510,27 @@ pub(crate) fn list_devices(cli: &Path) -> Option<String> {
 }
 
 fn build_command(cli: &Path, encoder: &Path, prompt: &str) -> Command {
+    build_prompt_command(cli, encoder, SYSTEM_PROMPT, prompt, MAX_TOKENS)
+}
+
+fn build_edit_command(cli: &Path, encoder: &Path, context: &str, instruction: &str) -> Command {
+    let prompt = format!("{context}\nNew edit: {instruction}");
+    build_prompt_command(cli, encoder, EDIT_SYSTEM_PROMPT, &prompt, EDIT_MAX_TOKENS)
+}
+
+fn build_prompt_command(
+    cli: &Path,
+    encoder: &Path,
+    system: &str,
+    prompt: &str,
+    max_tokens: u32,
+) -> Command {
     let mut command = Command::new(cli);
     command
         .arg("-m")
         .arg(encoder)
         .arg("-sys")
-        .arg(SYSTEM_PROMPT)
+        .arg(system)
         .arg("-p")
         .arg(prompt)
         .arg("-st")
@@ -225,7 +544,7 @@ fn build_command(cli: &Path, encoder: &Path, prompt: &str) -> Command {
         .arg("4096")
         .arg("--no-warmup")
         .arg("-n")
-        .arg(MAX_TOKENS.to_string())
+        .arg(max_tokens.to_string())
         .arg("--temp")
         .arg("0.4")
         .arg("-t")
@@ -350,6 +669,30 @@ fn parse_title(stdout: &str) -> Option<String> {
 }
 
 fn build_vision_command(cli: &Path, model: &Path, mmproj: &Path, image: &Path) -> Command {
+    build_vision_command_with(cli, model, mmproj, image, VISION_PROMPT, 8, 2048)
+}
+
+fn build_describe_command(cli: &Path, model: &Path, mmproj: &Path, image: &Path) -> Command {
+    build_vision_command_with(
+        cli,
+        model,
+        mmproj,
+        image,
+        DESCRIBE_PROMPT,
+        DESCRIBE_MAX_TOKENS,
+        4096,
+    )
+}
+
+fn build_vision_command_with(
+    cli: &Path,
+    model: &Path,
+    mmproj: &Path,
+    image: &Path,
+    prompt: &str,
+    max_tokens: u32,
+    context: u32,
+) -> Command {
     let mut command = Command::new(cli);
     command
         .arg("-m")
@@ -359,16 +702,16 @@ fn build_vision_command(cli: &Path, model: &Path, mmproj: &Path, image: &Path) -
         .arg("--image")
         .arg(image)
         .arg("-p")
-        .arg(VISION_PROMPT)
+        .arg(prompt)
         .arg("-st")
         .arg("--no-display-prompt")
         .arg("--color")
         .arg("off")
         .arg("-c")
-        .arg("2048")
+        .arg(context.to_string())
         .arg("--no-warmup")
         .arg("-n")
-        .arg("8")
+        .arg(max_tokens.to_string())
         .arg("--temp")
         .arg("0")
         .arg("-t")
@@ -406,6 +749,38 @@ fn parse_lighting(stdout: &str) -> Option<bool> {
         (Some(_), None) => Some(true),
         (None, Some(_)) => Some(false),
         (None, None) => None,
+    }
+}
+
+/// Pull the description out of the vision helper's output.
+fn parse_description(stdout: &str) -> Option<String> {
+    let text = strip_ansi(stdout);
+
+    // The echoed instruction also contains the tag names, so use the last
+    // opening tag (the model's answer) rather than the first.
+    if let Some(start) = text.rfind("<description>") {
+        let rest = &text[start + "<description>".len()..];
+        let end = rest
+            .find("</description>")
+            .or_else(|| rest.find("\n[ Prompt:"))
+            .unwrap_or(rest.len());
+        let candidate = clean(&rest[..end]);
+        if !candidate.is_empty() {
+            return Some(candidate);
+        }
+    }
+
+    // Fallback for models that ignore the tags: skip the echoed prompt line
+    // and stop at llama-cli's timing footer.
+    let (_, body) = text.rsplit_once("\n> ")?;
+    let body = body.split("\n[ Prompt:").next().unwrap_or(body);
+    let mut lines = body.lines();
+    let _ = lines.next();
+    let candidate = clean(&lines.collect::<Vec<_>>().join("\n"));
+    if candidate.is_empty() {
+        None
+    } else {
+        Some(candidate)
     }
 }
 
@@ -549,6 +924,143 @@ mod tests {
     }
 
     #[test]
+    fn builds_the_edit_command_with_scene_context() {
+        let args: Vec<String> = build_edit_command(
+            Path::new("/usr/bin/llama-cli"),
+            Path::new("/models/Qwen3-4B-Q4_K_M.gguf"),
+            "Current image: a fox on a path\nOriginal scene: a fox in a forest",
+            "make it eat",
+        )
+        .get_args()
+        .map(|argument| argument.to_string_lossy().into_owned())
+        .collect();
+        let system = args
+            .windows(2)
+            .find(|pair| pair[0] == "-sys")
+            .map(|pair| pair[1].as_str())
+            .unwrap();
+        assert!(system.contains("short, concrete instruction"));
+        assert!(system.contains("never write \"subject\""));
+        assert!(system.contains("2D animated cartoon"));
+        assert!(args.windows(2).any(|pair| pair == ["-n", "90"]));
+        let prompt = args
+            .windows(2)
+            .find(|pair| pair[0] == "-p")
+            .map(|pair| pair[1].as_str())
+            .unwrap();
+        assert!(prompt.contains("Current image: a fox on a path"));
+        assert!(prompt.contains("New edit: make it eat"));
+    }
+
+    #[test]
+    fn streams_only_the_tagged_prompt() {
+        let mut extractor = PromptExtractor::default();
+        let mut chunks = Vec::new();
+        extractor.feed_bytes(
+            b"> echo\n<prompt>The fox sits in a sunlit forest clearing with tall grass",
+            &mut |chunk| chunks.push(chunk.to_string()),
+        );
+        extractor.feed_bytes(
+            b" and fallen leaves.</prompt>\n[ Prompt: 1 ]\n",
+            &mut |chunk| chunks.push(chunk.to_string()),
+        );
+        extractor.finish(&mut |chunk| chunks.push(chunk.to_string()));
+        assert_eq!(
+            chunks.concat(),
+            "The fox sits in a sunlit forest clearing with tall grass and fallen leaves."
+        );
+        assert_eq!(
+            extract(&extractor.raw).as_deref(),
+            Some("The fox sits in a sunlit forest clearing with tall grass and fallen leaves.")
+        );
+    }
+
+    #[test]
+    fn streams_split_tags_and_utf8() {
+        let mut extractor = PromptExtractor::default();
+        let mut chunks = Vec::new();
+        extractor.feed_bytes(b"<pro", &mut |chunk| chunks.push(chunk.to_string()));
+        extractor.feed_bytes(b"mpt>caf", &mut |chunk| chunks.push(chunk.to_string()));
+        extractor.feed_bytes(&[0xC3], &mut |chunk| chunks.push(chunk.to_string()));
+        extractor.feed_bytes(&[0xA9], &mut |chunk| chunks.push(chunk.to_string()));
+        extractor.feed_bytes(b" au lait</pro", &mut |chunk| {
+            chunks.push(chunk.to_string())
+        });
+        extractor.feed_bytes(b"mpt>", &mut |chunk| chunks.push(chunk.to_string()));
+        extractor.finish(&mut |chunk| chunks.push(chunk.to_string()));
+        assert_eq!(chunks.concat(), "café au lait");
+    }
+
+    #[test]
+    fn falls_back_when_streaming_tags_are_missing() {
+        let mut extractor = PromptExtractor::default();
+        let mut chunks = Vec::new();
+        extractor.feed_bytes(
+            b"\n> a red fox\nA red fox in autumn leaves.\n[ Prompt: 1 ]\n",
+            &mut |chunk| chunks.push(chunk.to_string()),
+        );
+        extractor.finish(&mut |chunk| chunks.push(chunk.to_string()));
+        assert!(chunks.is_empty());
+        assert_eq!(
+            extract(&extractor.raw).as_deref(),
+            Some("A red fox in autumn leaves.")
+        );
+    }
+
+    #[test]
+    fn builds_the_description_command() {
+        let args: Vec<String> = build_describe_command(
+            Path::new("/usr/bin/llama-cli"),
+            Path::new("/models/vision/model.gguf"),
+            Path::new("/models/vision/mmproj.gguf"),
+            Path::new("/tmp/photo.png"),
+        )
+        .get_args()
+        .map(|argument| argument.to_string_lossy().into_owned())
+        .collect();
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--mmproj", "/models/vision/mmproj.gguf"])
+        );
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--image", "/tmp/photo.png"])
+        );
+        assert!(args.windows(2).any(|pair| pair == ["-n", "180"]));
+        assert!(args.windows(2).any(|pair| pair == ["-c", "4096"]));
+        let prompt = args
+            .windows(2)
+            .find(|pair| pair[0] == "-p")
+            .map(|pair| pair[1].as_str())
+            .unwrap();
+        assert!(prompt.contains("<description>"));
+    }
+
+    #[test]
+    fn parses_image_descriptions() {
+        assert_eq!(
+            parse_description(
+                "\n> describe\n<description>A cartoon fox on a forest path.</description>\n[ Prompt: 1 ]\n"
+            )
+            .as_deref(),
+            Some("A cartoon fox on a forest path.")
+        );
+        assert_eq!(
+            parse_description(
+                "\n> Describe the image and wrap it in <description> and </description> tags.\n<description>A cartoon fox on a forest path.</description>\n[ Prompt: 1 ]\n"
+            )
+            .as_deref(),
+            Some("A cartoon fox on a forest path.")
+        );
+        assert_eq!(
+            parse_description("\n> describe\nA cartoon fox on a forest path.\n[ Prompt: 1 ]\n")
+                .as_deref(),
+            Some("A cartoon fox on a forest path.")
+        );
+        assert_eq!(parse_description(""), None);
+    }
+
+    #[test]
     fn parses_generated_titles() {
         assert_eq!(
             parse_title("Title: \"Stormy Lighthouse at Dusk.\"\n"),
@@ -587,6 +1099,68 @@ mod tests {
 
         let title = title("a unique test fox", &encoder, &cli).unwrap();
         assert_eq!(title, "Golden Hour Fox");
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn streams_prompt_chunks_from_the_helper() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory =
+            std::env::temp_dir().join(format!("flux-stream-test-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let cli = directory.join("llama-cli");
+        let encoder = directory.join("encoder.gguf");
+        std::fs::write(&encoder, b"test").unwrap();
+        std::fs::write(
+            &cli,
+            b"#!/bin/sh\nprintf '\\n> prompt\\n<prompt>Hello '\nsleep 0.2\nprintf 'world</prompt>\\n[ Prompt: 1 ]\\n'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let result = improve_streaming("a fox", None, &encoder, &cli, cancel, move |chunk| {
+            let _ = sender.send(chunk.to_string());
+        })
+        .unwrap();
+        assert_eq!(result.as_deref(), Some("Hello world"));
+        let chunks: Vec<String> = receiver.try_iter().collect();
+        assert_eq!(chunks.concat(), "Hello world");
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancels_a_streaming_helper() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory =
+            std::env::temp_dir().join(format!("flux-cancel-test-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let cli = directory.join("llama-cli");
+        let encoder = directory.join("encoder.gguf");
+        std::fs::write(&encoder, b"test").unwrap();
+        std::fs::write(
+            &cli,
+            b"#!/bin/sh\nprintf '\\n> prompt\\n<prompt>Hello '\nexec sleep 5\nprintf 'world</prompt>'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let worker_cancel = cancel.clone();
+        let handle = std::thread::spawn(move || {
+            improve_streaming("a fox", None, &encoder, &cli, cancel, |_| {})
+        });
+        std::thread::sleep(Duration::from_millis(400));
+        worker_cancel.store(true, Ordering::SeqCst);
+        let started = Instant::now();
+        let result = handle.join().unwrap().unwrap();
+        assert!(result.is_none());
+        assert!(started.elapsed() < Duration::from_secs(2));
         let _ = std::fs::remove_dir_all(&directory);
     }
 

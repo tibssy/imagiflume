@@ -30,7 +30,9 @@ jobs:
           set -eux
           apt-get update
           apt-get install -y --no-install-recommends \
-            build-essential ca-certificates curl git pkg-config \
+            build-essential ca-certificates curl git pkg-config file \
+            patchelf librsvg2-bin librsvg2-dev libglib2.0-bin libgtk-4-bin \
+            gobject-introspection xvfb xauth dbus libgl1 libegl1 \
             libgtk-4-dev libadwaita-1-dev libgdk-pixbuf-2.0-dev \
             libglib2.0-dev libssl-dev libgstreamer1.0-dev \
             libgstreamer-plugins-base1.0-dev
@@ -51,6 +53,31 @@ jobs:
 
       - name: Tests
         run: cargo test --workspace --locked
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Build AppImage
+        env:
+          APPIMAGE_TOOLS: ${{ runner.temp }}/appimage-tools
+        run: |
+          set -eux
+          ./packaging/appimage/build-appimage.sh \
+            --binary target/release/imagiflume \
+            --outdir dist
+          ls -lh dist/imagiflume-linux-x86_64.AppImage*
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: imagiflume-linux-x86_64.AppImage
+          path: |
+            dist/imagiflume-linux-x86_64.AppImage
+            dist/imagiflume-linux-x86_64.AppImage.sha256
+          if-no-files-found: error
+
+      - name: Smoke-test AppImage
+        run: ./packaging/appimage/smoke-test.sh dist/imagiflume-linux-x86_64.AppImage
 
   packaging:
     runs-on: ubuntu-24.04
@@ -74,6 +101,9 @@ jobs:
 
       - name: Desktop entry
         run: desktop-file-validate packaging/io.github.tibssy.Imagiflume.desktop
+
+      - name: AppImage build script
+        run: bash -n packaging/appimage/build-appimage.sh
 
       - name: Flatpak manifests
         run: |

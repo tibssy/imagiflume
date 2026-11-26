@@ -25,6 +25,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use adw::prelude::*;
@@ -33,6 +34,7 @@ use imagiflume_backend_sdcpp::{SdServer, SdServerConfig};
 use imagiflume_core::preset::{ModelPreset, PRESETS, default_preset, preset};
 use imagiflume_core::style::STYLES;
 use imagiflume_core::upscaler::{self, UpscaleRequest, UpscaledImage, UpscalerPreset};
+use imagiflume_core::vision::VISION_HELPER;
 use imagiflume_core::{Backend, Config, GenerateRequest, Progress, paths, size};
 
 use history::{Generation, History, NewGeneration};
@@ -156,6 +158,10 @@ pub(crate) struct Ui {
     pub camera_preview: RefCell<Option<camera::Preview>>,
     pub improve_button: gtk::Button,
     pub improving: Cell<bool>,
+    /// Stops a streaming prompt improvement when the user edits the field.
+    pub improve_cancel: Arc<AtomicBool>,
+    /// Set by the prompt buffer handler when the user edits during streaming.
+    pub improve_user_edited: Cell<bool>,
     /// Position while browsing prompt history; `None` is the live draft.
     pub prompt_history_index: Cell<Option<usize>>,
     /// Suppresses the draft reset while the history fills the prompt.
@@ -720,6 +726,8 @@ fn build_ui(app: &adw::Application) {
         camera_preview: RefCell::new(None),
         improve_button: view.improve_button,
         improving: Cell::new(false),
+        improve_cancel: Arc::new(AtomicBool::new(false)),
+        improve_user_edited: Cell::new(false),
         prompt_history_index: Cell::new(None),
         prompt_edit_guard: Cell::new(false),
         prompt_draft: RefCell::new(String::new()),
@@ -1197,6 +1205,10 @@ fn wire_events(ui: &Rc<Ui>, preferences_button: &gtk::Button) {
         ui.prompt.buffer().connect_changed(move |_| {
             if !ui.prompt_edit_guard.get() {
                 ui.prompt_history_index.set(None);
+                if ui.improving.get() {
+                    ui.improve_user_edited.set(true);
+                    ui.improve_cancel.store(true, Ordering::SeqCst);
+                }
             }
         });
     }
@@ -1622,6 +1634,22 @@ fn wire_events(ui: &Rc<Ui>, preferences_button: &gtk::Button) {
             {
                 navigate_prompt_history(&ui, key == gdk::Key::Up);
                 return glib::Propagation::Stop;
+            }
+            if matches!(key, gdk::Key::Return | gdk::Key::KP_Enter) {
+                if ui.prompt.has_focus() {
+                    // Shift+Enter keeps the TextBuffer's newline behavior.
+                    if state.contains(gdk::ModifierType::SHIFT_MASK) {
+                        return glib::Propagation::Proceed;
+                    }
+                    if ui.composer.reveals_child() {
+                        start_generation(&ui);
+                    }
+                    return glib::Propagation::Stop;
+                }
+                if state.contains(gdk::ModifierType::CONTROL_MASK) && ui.composer.reveals_child() {
+                    start_generation(&ui);
+                    return glib::Propagation::Stop;
+                }
             }
             if !state.contains(gdk::ModifierType::CONTROL_MASK) {
                 return glib::Propagation::Proceed;
@@ -2263,7 +2291,7 @@ pub(crate) fn update_image_view(ui: &Rc<Ui>) {
                 set_empty_page(
                     ui,
                     "No image yet",
-                    "Describe an image below, then press Generate.",
+                    "Describe an image below, then press Enter. Shift+Enter adds a new line.",
                 );
                 ui.stack.set_visible_child_name("empty");
             }
@@ -2275,7 +2303,7 @@ pub(crate) fn update_image_view(ui: &Rc<Ui>) {
             set_empty_page(
                 ui,
                 "No image yet",
-                "Describe an image below, then press Generate.",
+                "Describe an image below, then press Enter. Shift+Enter adds a new line.",
             );
             ui.stack.set_visible_child_name("empty");
         }
@@ -2485,6 +2513,7 @@ fn edit_current_image(ui: &Rc<Ui>) {
     update_image_view(ui);
     if added {
         fit_reference_size(ui);
+        reset_edit_style(ui);
     }
     show_composer(ui, true);
     let count = ui.state.borrow().references.len();
@@ -2650,10 +2679,14 @@ fn apply_crop(ui: &Rc<Ui>, selection: CropRect) {
     match result {
         Ok((destination, surface)) => {
             let previous = ui.state.borrow().clone();
+            let was_editing = ui.state.borrow().is_editing();
             ui.undo
                 .borrow_mut()
                 .push(&previous, (x as f64, y as f64, width as f64, height as f64));
             ui.state.borrow_mut().load(destination);
+            if !was_editing {
+                reset_edit_style(ui);
+            }
             update_image_view(ui);
             fit_reference_size(ui);
             start_zoom(
@@ -3405,6 +3438,10 @@ pub(crate) fn add_references(ui: &Rc<Ui>, paths: Vec<PathBuf>) {
         return;
     }
 
+    if was_empty {
+        reset_edit_style(ui);
+    }
+
     ui.undo.borrow_mut().clear();
     update_image_view(ui);
     if was_empty && count == 1 {
@@ -3490,6 +3527,23 @@ fn same_file(left: &Path, right: &Path) -> bool {
         )
 }
 
+enum ImproveEvent {
+    Status(&'static str),
+    Chunk(String),
+    Done(anyhow::Result<Option<String>>),
+}
+
+struct ImproveJob {
+    original: String,
+    reference: Option<PathBuf>,
+    chain: Option<String>,
+    vision: Option<(PathBuf, PathBuf)>,
+    encoder: PathBuf,
+    cli: PathBuf,
+    cancel: Arc<AtomicBool>,
+    sender: async_channel::Sender<ImproveEvent>,
+}
+
 fn improve_prompt(ui: &Rc<Ui>) {
     if ui.improving.get() {
         return;
@@ -3521,67 +3575,254 @@ fn improve_prompt(ui: &Rc<Ui>) {
         return;
     }
 
-    let original_for_worker = original.clone();
-    ui.improving.set(true);
-    ui.improve_button.set_sensitive(false);
-    ui.status.set_text("Improving prompt…");
+    let reference = if ui.state.borrow().is_editing() {
+        ui.state.borrow().references.first().cloned()
+    } else {
+        None
+    };
+    let chain = reference
+        .as_deref()
+        .and_then(|path| edit_chain_context(ui, path));
+    // LFM is the only description model used here: Qwen3VL is accurate but too
+    // slow to put in front of every Improve click.
+    let vision = reference.as_ref().and_then(|_| {
+        VISION_HELPER.is_installed(&ui.models_dir).then(|| {
+            (
+                VISION_HELPER.model_path(&ui.models_dir),
+                VISION_HELPER.mmproj_path(&ui.models_dir),
+            )
+        })
+    });
+    if reference.is_some() && vision.is_none() && chain.is_none() {
+        ui.toast.add_toast(adw::Toast::new(
+            "Install the vision helper in Preferences to describe imported images.",
+        ));
+    }
 
-    let (sender, receiver) = async_channel::bounded(1);
+    ui.improving.set(true);
+    ui.improve_user_edited.set(false);
+    ui.improve_cancel.store(false, Ordering::SeqCst);
+    ui.improve_button.set_sensitive(false);
+    ui.status.set_text(if vision.is_some() {
+        "Reading the reference image…"
+    } else {
+        "Improving prompt…"
+    });
+
+    let (sender, receiver) = async_channel::unbounded::<ImproveEvent>();
+    let cancel = ui.improve_cancel.clone();
+    let worker_sender = sender.clone();
+    let done_sender = sender.clone();
+    let worker_original = original.clone();
     std::thread::spawn(move || {
-        let _ = sender.send_blocking(prompt_ai::improve(&original_for_worker, &encoder, &cli));
+        let result = improve_worker(ImproveJob {
+            original: worker_original,
+            reference,
+            chain,
+            vision,
+            encoder,
+            cli,
+            cancel,
+            sender: worker_sender,
+        });
+        let _ = done_sender.send_blocking(ImproveEvent::Done(result));
     });
 
     let ui = ui.clone();
     glib::spawn_future_local(async move {
-        let result = receiver.recv().await;
-        ui.improving.set(false);
-        refresh_model(&ui);
+        let mut streaming = false;
+        while let Ok(event) = receiver.recv().await {
+            match event {
+                ImproveEvent::Status(text) => ui.status.set_text(text),
+                ImproveEvent::Chunk(chunk) => {
+                    if ui.improve_user_edited.get() {
+                        continue;
+                    }
+                    let buffer = ui.prompt.buffer();
+                    ui.prompt_edit_guard.set(true);
+                    if streaming {
+                        let mut end = buffer.end_iter();
+                        buffer.insert(&mut end, &chunk);
+                    } else {
+                        streaming = true;
+                        buffer.set_text(&chunk);
+                    }
+                    ui.prompt_edit_guard.set(false);
+                }
+                ImproveEvent::Done(result) => {
+                    ui.improving.set(false);
+                    refresh_model(&ui);
 
-        match result {
-            Ok(Ok(improved)) => {
-                if current_prompt(&ui).trim() != original {
-                    ui.status.set_text("Prompt changed");
-                    ui.toast
-                        .add_toast(adw::Toast::new("Prompt changed; improvement discarded."));
+                    if ui.improve_user_edited.get() {
+                        ui.status.set_text("Prompt changed");
+                        return;
+                    }
+
+                    match result {
+                        Ok(Some(improved)) if !improved.trim().is_empty() => {
+                            ui.prompt_edit_guard.set(true);
+                            ui.prompt.buffer().set_text(&improved);
+                            ui.prompt_edit_guard.set(false);
+                            ui.prompt.grab_focus();
+                            ui.status.set_text("Prompt improved");
+
+                            let toast = adw::Toast::new("Prompt improved.");
+                            toast.set_button_label(Some("Undo"));
+                            let prompt = ui.prompt.clone();
+                            let old = original.clone();
+                            let new = improved.clone();
+                            toast.connect_button_clicked(move |_| {
+                                let buffer = prompt.buffer();
+                                let current = buffer
+                                    .text(&buffer.start_iter(), &buffer.end_iter(), false)
+                                    .trim()
+                                    .to_string();
+                                if current == new.trim() {
+                                    buffer.set_text(&old);
+                                }
+                            });
+                            ui.toast.add_toast(toast);
+                        }
+                        Ok(_) => {
+                            if streaming {
+                                ui.prompt_edit_guard.set(true);
+                                ui.prompt.buffer().set_text(&original);
+                                ui.prompt_edit_guard.set(false);
+                            }
+                            ui.status.set_text("Prompt improvement cancelled");
+                        }
+                        Err(error) => {
+                            if streaming {
+                                ui.prompt_edit_guard.set(true);
+                                ui.prompt.buffer().set_text(&original);
+                                ui.prompt_edit_guard.set(false);
+                            }
+                            tracing::warn!(%error, "prompt improvement failed");
+                            ui.status.set_text("Prompt helper unavailable");
+                            let error = error.to_string();
+                            let message = match prompt_ai::dependency_hint(&error) {
+                                Some(hint) => {
+                                    format!("Could not improve prompt: {error}. {hint}")
+                                }
+                                None => format!("Could not improve prompt: {error}"),
+                            };
+                            ui.toast.add_toast(adw::Toast::new(&message));
+                        }
+                    }
                     return;
                 }
-
-                ui.prompt.buffer().set_text(&improved);
-                ui.prompt.grab_focus();
-                ui.status.set_text("Prompt improved");
-
-                let toast = adw::Toast::new("Prompt improved.");
-                toast.set_button_label(Some("Undo"));
-                let prompt = ui.prompt.clone();
-                let old = original.clone();
-                let new = improved.clone();
-                toast.connect_button_clicked(move |_| {
-                    let buffer = prompt.buffer();
-                    let current = buffer
-                        .text(&buffer.start_iter(), &buffer.end_iter(), false)
-                        .trim()
-                        .to_string();
-                    if current == new.trim() {
-                        buffer.set_text(&old);
-                    }
-                });
-                ui.toast.add_toast(toast);
-            }
-            Ok(Err(error)) => {
-                tracing::warn!(%error, "prompt improvement failed");
-                ui.status.set_text("Prompt helper unavailable");
-                let error = error.to_string();
-                let message = match prompt_ai::dependency_hint(&error) {
-                    Some(hint) => format!("Could not improve prompt: {error}. {hint}"),
-                    None => format!("Could not improve prompt: {error}"),
-                };
-                ui.toast.add_toast(adw::Toast::new(&message));
-            }
-            Err(_) => {
-                ui.status.set_text("Prompt helper unavailable");
             }
         }
+        ui.improving.set(false);
+        refresh_model(&ui);
     });
+}
+
+fn improve_worker(job: ImproveJob) -> anyhow::Result<Option<String>> {
+    let ImproveJob {
+        original,
+        reference,
+        chain,
+        vision,
+        encoder,
+        cli,
+        cancel,
+        sender,
+    } = job;
+    let mut description = None;
+    if let (Some(reference), Some((model, mmproj))) = (reference, vision) {
+        if cancel.load(Ordering::SeqCst) {
+            return Ok(None);
+        }
+        let _ = sender.send_blocking(ImproveEvent::Status("Reading the reference image…"));
+        match prompt_ai::describe_image(&reference, &model, &mmproj, &cli) {
+            Ok(text) => description = Some(text),
+            Err(error) => tracing::warn!(%error, "could not describe the reference image"),
+        }
+    }
+    if cancel.load(Ordering::SeqCst) {
+        return Ok(None);
+    }
+
+    let _ = sender.send_blocking(ImproveEvent::Status("Improving prompt…"));
+    // The current image is authoritative. The history chain is a fallback for
+    // imported images (or a failed description), not an extra source of
+    // conflicting instructions that could undo earlier edits.
+    let context = match (description, chain) {
+        (Some(description), _) => Some(format!("Current image: {description}")),
+        (None, Some(chain)) => Some(chain),
+        (None, None) => None,
+    };
+    let chunk_sender = sender.clone();
+    prompt_ai::improve_streaming(
+        &original,
+        context.as_deref(),
+        &encoder,
+        &cli,
+        cancel,
+        move |chunk| {
+            let _ = chunk_sender.send_blocking(ImproveEvent::Chunk(chunk.to_string()));
+        },
+    )
+}
+
+/// Collect the original scene and prior edit instructions for an image.
+///
+/// The vision description covers the current appearance; this chain covers the
+/// intent that led to it. Returns `None` for imports with no usable history.
+fn edit_chain_context(ui: &Rc<Ui>, reference: &Path) -> Option<String> {
+    let history = ui.history.borrow();
+    let mut entry = history
+        .find_by_image_path(&reference.to_string_lossy())
+        .ok()
+        .flatten()?;
+    let mut prompts = Vec::new();
+    let mut seen = HashSet::new();
+
+    loop {
+        if !seen.insert(entry.id) {
+            break;
+        }
+        let prompt = entry.prompt.trim();
+        if !prompt.is_empty() {
+            prompts.push(truncate_chars(prompt, 600));
+        }
+
+        let next = if let Some(parent_id) = entry.parent_id {
+            history.get(parent_id).ok().flatten()
+        } else {
+            None
+        };
+        let next = next.or_else(|| {
+            let path = entry.reference_paths.first()?;
+            history.find_by_image_path(path).ok().flatten()
+        });
+        let Some(next) = next else {
+            break;
+        };
+        entry = next;
+        if prompts.len() >= 6 {
+            break;
+        }
+    }
+
+    prompts.reverse();
+    let scene = prompts.first()?;
+    let mut context = format!("Original scene: {scene}");
+    if prompts.len() > 1 {
+        context.push_str("\nPrevious edits: ");
+        context.push_str(&prompts[1..].join("; "));
+    }
+    Some(context)
+}
+
+fn truncate_chars(text: &str, limit: usize) -> String {
+    if text.chars().count() <= limit {
+        return text.to_string();
+    }
+    let mut truncated: String = text.chars().take(limit).collect();
+    truncated.push('…');
+    truncated
 }
 
 fn current_prompt(ui: &Rc<Ui>) -> String {
@@ -3846,6 +4087,28 @@ fn current_style_id(ui: &Rc<Ui>) -> &'static str {
         .get(ui.style_dropdown.selected() as usize)
         .map(|style| style.id)
         .unwrap_or("none")
+}
+
+/// Entering edit mode starts with no style suffix.
+///
+/// The reference already defines the look; silently appending a saved style
+/// (for example Disney/Pixar) would override the edit request. The user can
+/// still pick a style again from the dropdown.
+pub(crate) fn reset_edit_style(ui: &Rc<Ui>) {
+    let selected_none = ui.style_dropdown.selected() == 0;
+    let config_changed = ui.config.borrow().style_id != "none";
+    if !selected_none {
+        ui.style_dropdown.set_selected(0);
+    }
+    if config_changed {
+        let mut config = ui.config.borrow_mut();
+        config.style_id = "none".to_string();
+        let _ = config.save();
+    }
+    if !selected_none || config_changed {
+        ui.toast
+            .add_toast(adw::Toast::new("Style set to None for editing."));
+    }
 }
 
 fn start_generation(ui: &Rc<Ui>) {
@@ -4247,8 +4510,7 @@ fn pump_queue(ui: &Rc<Ui>) -> bool {
     ui.generating.set(true);
     ui.upscaling.set(upscaling);
     ui.live_preview.borrow_mut().take();
-    ui.generate
-        .set_tooltip_text(Some("Add to queue (Ctrl+Enter)"));
+    ui.generate.set_tooltip_text(Some("Add to queue (Enter)"));
     ui.cancel.set_sensitive(true);
     ui.progress.set_visible(true);
     ui.progress.set_fraction(0.0);
@@ -4931,7 +5193,7 @@ fn finish_job(ui: &Rc<Ui>) {
     if !pump_queue(ui) {
         ui.generating.set(false);
         ui.live_preview.borrow_mut().take();
-        ui.generate.set_tooltip_text(Some("Generate (Ctrl+Enter)"));
+        ui.generate.set_tooltip_text(Some("Generate (Enter)"));
         sync_live_controls(ui);
         ui.cancel.set_sensitive(false);
         ui.progress.set_visible(false);

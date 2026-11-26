@@ -244,7 +244,7 @@ impl History {
         Ok(generations)
     }
 
-    fn get(&self, id: i64) -> Result<Option<Generation>> {
+    pub fn get(&self, id: i64) -> Result<Option<Generation>> {
         let sql = format!("SELECT {COLUMNS} FROM generations WHERE id = ?1");
         Ok(self.conn.query_row(&sql, [id], map_row).optional()?)
     }

@@ -17,3 +17,9 @@
 # flatpak-builder
 /.flatpak-builder
 /build-dir
+
+# AppImage build artifacts
+/dist
+/squashfs-root
+*.AppImage
+*.AppImage.sha256
