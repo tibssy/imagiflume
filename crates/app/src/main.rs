@@ -2417,6 +2417,19 @@ pub(crate) fn show_composer(ui: &Rc<Ui>, show: bool) {
     }
 }
 
+/// Whether edits may run on the image currently on screen.
+///
+/// A live generation preview is still changing, so actions wait for it. A
+/// pinned history image stays usable while jobs run in the background, and an
+/// upscale has no live preview, so its source stays stable.
+pub(crate) fn image_actions_stable(ui: &Ui) -> bool {
+    image_actions_stable_for(ui.generating.get(), ui.upscaling.get(), ui.live_view.get())
+}
+
+fn image_actions_stable_for(generating: bool, upscaling: bool, live_view: bool) -> bool {
+    !(generating && !upscaling && live_view)
+}
+
 pub(crate) fn update_image_actions(ui: &Rc<Ui>) {
     let (has_image, editing) = {
         let state = ui.state.borrow();
@@ -2435,7 +2448,7 @@ pub(crate) fn update_image_actions(ui: &Rc<Ui>) {
     let navigation = has_image && !editing && !zooming && !classifying;
     // Only a live preview is unstable: a pinned history image stays fully
     // usable while jobs run in the background.
-    let stable = !(generating && !upscaling && ui.live_view.get());
+    let stable = image_actions_stable(ui);
     let vision_ready = imagiflume_core::vision::VISION_HELPER.is_installed(&ui.models_dir);
 
     ui.nav_up_button
@@ -2546,9 +2559,10 @@ fn set_crop_mode(ui: &Rc<Ui>, active: bool) {
 }
 
 fn undo_crop(ui: &Rc<Ui>) {
-    if (ui.generating.get() && !ui.upscaling.get()) || ui.classifying.get() {
+    if !image_actions_stable(ui) || ui.classifying.get() {
         return;
     }
+    crate::pause_live_view(ui);
     cancel_zoom(ui);
     // End the mutable borrow before update_image_view() re-borrows the stack.
     let entry = ui.undo.borrow_mut().undo();
@@ -5643,7 +5657,7 @@ fn start_lighting_conversion(ui: &Rc<Ui>, source: PathBuf, to_night: bool) {
 }
 
 fn auto_lighting(ui: &Rc<Ui>) {
-    if (ui.generating.get() && !ui.upscaling.get()) || ui.zooming.get() || ui.classifying.get() {
+    if !image_actions_stable(ui) || ui.zooming.get() || ui.classifying.get() {
         return;
     }
     if !can_start_image_action(ui) {
@@ -6607,7 +6621,8 @@ pub(crate) fn slugify(prompt: &str) -> String {
 mod tests {
     use super::{
         GenerationMode, contain_rect, crop_rect_from_drag, duration_label, fit_scale_for,
-        lerp_rect, max_zoom_for, references_after_result, slugify, zoom_percent,
+        image_actions_stable_for, lerp_rect, max_zoom_for, references_after_result, slugify,
+        zoom_percent,
     };
     use std::path::{Path, PathBuf};
 
@@ -6824,5 +6839,26 @@ mod tests {
             vec!["broken.ckpt".to_string(), "other.pt".to_string()]
         );
         assert!(super::failed_lora_names("nothing here").is_empty());
+    }
+
+    #[test]
+    fn pinned_history_image_stays_editable_while_generating() {
+        assert!(image_actions_stable_for(true, false, false));
+    }
+
+    #[test]
+    fn live_preview_blocks_edits_while_generating() {
+        assert!(!image_actions_stable_for(true, false, true));
+    }
+
+    #[test]
+    fn upscaling_keeps_the_source_editable() {
+        assert!(image_actions_stable_for(true, true, true));
+    }
+
+    #[test]
+    fn idle_canvas_is_editable() {
+        assert!(image_actions_stable_for(false, false, true));
+        assert!(image_actions_stable_for(false, false, false));
     }
 }

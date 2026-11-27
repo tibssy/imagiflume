@@ -94,6 +94,11 @@ pub(crate) fn begin(ui: &Rc<Ui>) -> bool {
     if ui.transform_preview.borrow().is_some() {
         return true;
     }
+    if !crate::image_actions_stable(ui) || ui.zooming.get() || ui.classifying.get() {
+        ui.transform_apply_button.set_sensitive(false);
+        return false;
+    }
+    crate::pause_live_view(ui);
     let Some(source) = ui.state.borrow().display.clone() else {
         ui.transform_apply_button.set_sensitive(false);
         return false;

@@ -30,9 +30,10 @@ struct Preview {
 }
 
 pub(crate) fn show(ui: &Rc<Ui>) {
-    if (ui.generating.get() && !ui.upscaling.get()) || ui.zooming.get() || ui.classifying.get() {
+    if !crate::image_actions_stable(ui) || ui.zooming.get() || ui.classifying.get() {
         return;
     }
+    crate::pause_live_view(ui);
     let Some(source) = ui.state.borrow().display.clone() else {
         ui.toast.add_toast(adw::Toast::new("No image to adjust."));
         return;

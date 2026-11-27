@@ -5,6 +5,10 @@ rough edges.
 
 ## Unreleased
 
+- **Editing during background jobs**: Adjust colors, rotate/flip and undo crop
+  now work on a history image while a generation or upscale is running. A live
+  generation preview still waits for the job, and a manual edit pins the canvas
+  so a finishing upscale does not overwrite it.
 - **Report an Issue**: **Preferences → About → Diagnostics → Report an Issue**
   copies a report with the end of the backend and prompt-helper logs, then opens
   a prefilled GitHub bug report. The home directory, username, and hostname are
